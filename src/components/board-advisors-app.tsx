@@ -63,6 +63,27 @@ interface ResearchResponse {
   error?: string;
 }
 
+type DocumentKindFilter = "all" | "editable" | "uploaded";
+type DocumentStarFilter = "all" | "starred";
+type DocumentSort = "updated" | "title" | "tokens";
+
+function sortDocuments(documents: BusinessDocument[], mode: DocumentSort) {
+  const sortable = [...documents];
+
+  if (mode === "title") {
+    sortable.sort((a, b) => a.title.localeCompare(b.title));
+    return sortable;
+  }
+
+  if (mode === "tokens") {
+    sortable.sort((a, b) => b.tokenCount - a.tokenCount);
+    return sortable;
+  }
+
+  sortable.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return sortable;
+}
+
 function buildBusinessContext(documents: BusinessDocument[]): string {
   if (!documents.length) {
     return "";
@@ -114,6 +135,12 @@ export function BoardAdvisorsApp() {
 
   const [newDocumentTitle, setNewDocumentTitle] = useState("");
   const [newAdvisorName, setNewAdvisorName] = useState("");
+  const [documentQuery, setDocumentQuery] = useState("");
+  const [documentKindFilter, setDocumentKindFilter] =
+    useState<DocumentKindFilter>("all");
+  const [documentStarFilter, setDocumentStarFilter] =
+    useState<DocumentStarFilter>("all");
+  const [documentSort, setDocumentSort] = useState<DocumentSort>("updated");
 
   const [uploadError, setUploadError] = useState("");
   const [advisorError, setAdvisorError] = useState("");
@@ -128,6 +155,7 @@ export function BoardAdvisorsApp() {
   const [draftContent, setDraftContent] = useState("");
   const [draftLexicalState, setDraftLexicalState] = useState<string | null>(null);
   const [draftDirty, setDraftDirty] = useState(false);
+  const [documentTitleDraft, setDocumentTitleDraft] = useState("");
 
   useEffect(() => {
     try {
@@ -197,7 +225,57 @@ export function BoardAdvisorsApp() {
     [appState.advisors, selectedAdvisorId],
   );
 
+  const filteredDocuments = useMemo(() => {
+    const normalizedQuery = documentQuery.trim().toLowerCase();
+
+    const matches = appState.documents.filter((document) => {
+      if (documentKindFilter !== "all" && document.kind !== documentKindFilter) {
+        return false;
+      }
+
+      if (documentStarFilter === "starred" && !document.starred) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return (
+        document.title.toLowerCase().includes(normalizedQuery) ||
+        document.extension.toLowerCase().includes(normalizedQuery)
+      );
+    });
+
+    return sortDocuments(matches, documentSort);
+  }, [appState.documents, documentKindFilter, documentQuery, documentSort, documentStarFilter]);
+
+  const starredDocuments = useMemo(
+    () => filteredDocuments.filter((document) => document.starred),
+    [filteredDocuments],
+  );
+
+  const regularDocuments = useMemo(
+    () => filteredDocuments.filter((document) => !document.starred),
+    [filteredDocuments],
+  );
+
+  const totalDocumentTokens = useMemo(
+    () => appState.documents.reduce((sum, document) => sum + document.tokenCount, 0),
+    [appState.documents],
+  );
+
   useEffect(() => {
+    if (!selectedDocument) {
+      setDocumentTitleDraft("");
+      setDraftContent("");
+      setDraftLexicalState(null);
+      setDraftDirty(false);
+      return;
+    }
+
+    setDocumentTitleDraft(selectedDocument.title);
+
     if (!selectedDocument || selectedDocument.kind !== "editable") {
       setDraftContent("");
       setDraftLexicalState(null);
@@ -209,6 +287,21 @@ export function BoardAdvisorsApp() {
     setDraftLexicalState(selectedDocument.lexicalState);
     setDraftDirty(false);
   }, [selectedDocument]);
+
+  useEffect(() => {
+    if (!filteredDocuments.length) {
+      return;
+    }
+
+    if (
+      selectedDocumentId &&
+      filteredDocuments.some((document) => document.id === selectedDocumentId)
+    ) {
+      return;
+    }
+
+    setSelectedDocumentId(filteredDocuments[0].id);
+  }, [filteredDocuments, selectedDocumentId]);
 
   function updateSettings<K extends keyof AppState["settings"]>(
     field: K,
@@ -231,6 +324,18 @@ export function BoardAdvisorsApp() {
       ...previous,
       advisors: previous.advisors.map((advisor) =>
         advisor.id === advisorId ? updater(advisor) : advisor,
+      ),
+    }));
+  }
+
+  function updateDocument(
+    documentId: string,
+    updater: (document: BusinessDocument) => BusinessDocument,
+  ) {
+    setAppState((previous) => ({
+      ...previous,
+      documents: previous.documents.map((document) =>
+        document.id === documentId ? updater(document) : document,
       ),
     }));
   }
@@ -380,6 +485,31 @@ export function BoardAdvisorsApp() {
     }
   }
 
+  function handleToggleDocumentStar(documentId: string) {
+    updateDocument(documentId, (document) => ({
+      ...document,
+      starred: !document.starred,
+      updatedAt: nowIso(),
+    }));
+  }
+
+  function handleDocumentTitleCommit() {
+    if (!selectedDocument) {
+      return;
+    }
+
+    const normalizedTitle = documentTitleDraft.trim() || "Untitled";
+    if (normalizedTitle === selectedDocument.title) {
+      return;
+    }
+
+    updateDocument(selectedDocument.id, (document) => ({
+      ...document,
+      title: normalizedTitle,
+      updatedAt: nowIso(),
+    }));
+  }
+
   function handleCreateAdvisor() {
     const trimmedName = newAdvisorName.trim();
 
@@ -437,7 +567,6 @@ export function BoardAdvisorsApp() {
           advisorName: selectedAdvisor.name,
           userName: appState.settings.userName,
           businessContext: buildBusinessContext(appState.documents),
-          model: appState.settings.researchModel,
         }),
       });
 
@@ -493,403 +622,558 @@ export function BoardAdvisorsApp() {
           </div>
         </header>
 
-        <nav className="boa-tabs" aria-label="Application sections">
-          {TAB_LABELS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`boa-tab ${activeTab === tab.id ? "active" : ""}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              <strong>{tab.label}</strong>
-              <span>{tab.description}</span>
-            </button>
-          ))}
-        </nav>
+        <div className="boa-workspace">
+          <nav className="boa-tabs boa-tabs-rail" aria-label="Application sections">
+            {TAB_LABELS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`boa-tab ${activeTab === tab.id ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <strong>{tab.label}</strong>
+                <span>{tab.description}</span>
+              </button>
+            ))}
+          </nav>
 
-        {(statusMessage || uploadError || advisorError) && (
-          <section className="boa-messages" aria-live="polite">
-            {statusMessage && <p className="boa-message success">{statusMessage}</p>}
-            {uploadError && <p className="boa-message error">{uploadError}</p>}
-            {advisorError && <p className="boa-message error">{advisorError}</p>}
-          </section>
-        )}
+          <div className="boa-content-stage">
+            {(statusMessage || uploadError || advisorError) && (
+              <section className="boa-messages" aria-live="polite">
+                {statusMessage && <p className="boa-message success">{statusMessage}</p>}
+                {uploadError && <p className="boa-message error">{uploadError}</p>}
+                {advisorError && <p className="boa-message error">{advisorError}</p>}
+              </section>
+            )}
 
-        {activeTab === "settings" && (
-          <section className="boa-panel">
-            <div className="boa-panel-head">
-              <h2>Settings</h2>
-              <p>
-                API usage is billed to your own OpenAI account. This key is saved only
-                in your browser on this device.
-              </p>
-            </div>
-
-            <label className="boa-field">
-              <span>Your name</span>
-              <input
-                type="text"
-                placeholder="e.g. Alex Founder"
-                value={appState.settings.userName}
-                onChange={(event) => updateSettings("userName", event.target.value)}
-              />
-            </label>
-
-            <label className="boa-field">
-              <span>OpenAI API key</span>
-              <input
-                type="password"
-                placeholder="sk-..."
-                value={appState.settings.openaiApiKey}
-                onChange={(event) =>
-                  updateSettings("openaiApiKey", event.target.value.trim())
-                }
-                autoComplete="off"
-              />
-            </label>
-
-            <label className="boa-field">
-              <span>Research model</span>
-              <input
-                type="text"
-                value={appState.settings.researchModel}
-                onChange={(event) =>
-                  updateSettings("researchModel", event.target.value.trim())
-                }
-                placeholder="o4-mini-deep-research"
-              />
-            </label>
-
-            <p className="boa-note">
-              Suggested starting model: <code>o4-mini-deep-research</code> with low
-              reasoning effort.
-            </p>
-          </section>
-        )}
-
-        {activeTab === "documents" && (
-          <section className="boa-panel">
-            <div className="boa-panel-head">
-              <h2>Business Documents</h2>
-              <p>
-                Create editable strategic docs with Lexical, or upload uneditable
-                text-based files. Token counts are calculated with tiktoken.
-              </p>
-            </div>
-
-            <div className="boa-two-up">
-              <aside className="boa-sidebar">
-                <div className="boa-sidebar-section">
-                  <h3>Create editable draft</h3>
-                  <input
-                    type="text"
-                    placeholder="Document title"
-                    value={newDocumentTitle}
-                    onChange={(event) => setNewDocumentTitle(event.target.value)}
-                  />
-                  <button type="button" onClick={handleCreateEditableDocument}>
-                    Create Draft
-                  </button>
-                </div>
-
-                <div className="boa-sidebar-section">
-                  <h3>Upload file</h3>
-                  <label className="boa-upload">
-                    <span>{isUploading ? "Uploading..." : "Select documents"}</span>
-                    <input
-                      type="file"
-                      accept={UPLOAD_ACCEPT_LIST}
-                      multiple
-                      disabled={isUploading}
-                      onChange={handleUploadFiles}
-                    />
-                  </label>
-                  <p className="boa-note tiny">
-                    Supported: .docx, .xls/.xlsx, .txt/.md/.csv/.json/.xml and other
-                    text-based formats. Not supported: PDF, PowerPoint, images.
+            {activeTab === "settings" && (
+              <section className="boa-panel">
+                <div className="boa-panel-head">
+                  <h2>Settings</h2>
+                  <p>
+                    API usage is billed to your own OpenAI account. This key is saved only
+                    in your browser on this device.
                   </p>
                 </div>
 
-                <div className="boa-sidebar-section">
-                  <h3>Library</h3>
-                  <ul className="boa-list">
-                    {appState.documents.length === 0 && (
-                      <li className="boa-empty">No documents yet.</li>
-                    )}
-                    {appState.documents.map((document) => (
-                      <li key={document.id}>
-                        <button
-                          type="button"
-                          className={`boa-list-item ${
-                            selectedDocumentId === document.id ? "active" : ""
-                          }`}
-                          onClick={() => setSelectedDocumentId(document.id)}
-                        >
-                          <strong>{document.title}</strong>
-                          <span>
-                            {document.kind === "editable" ? "Editable" : "Uploaded"} ·{" "}
-                            {document.tokenCount.toLocaleString()} tokens
-                          </span>
-                          <small>{formatDate(document.updatedAt)}</small>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                <label className="boa-field">
+                  <span>Your name</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. Alex Founder"
+                    value={appState.settings.userName}
+                    onChange={(event) => updateSettings("userName", event.target.value)}
+                  />
+                </label>
+
+                <label className="boa-field">
+                  <span>OpenAI API key</span>
+                  <input
+                    type="password"
+                    placeholder="sk-..."
+                    value={appState.settings.openaiApiKey}
+                    onChange={(event) =>
+                      updateSettings("openaiApiKey", event.target.value.trim())
+                    }
+                    autoComplete="off"
+                  />
+                </label>
+              </section>
+            )}
+
+            {activeTab === "documents" && (
+              <section className="boa-panel">
+                <div className="boa-panel-head">
+                  <h2>Business Documents</h2>
+                  <p>
+                    Inspired by Notion and Google Drive patterns: quick search, filters,
+                    starring, and sort controls so your strategy corpus stays navigable.
+                  </p>
                 </div>
-              </aside>
 
-              <article className="boa-editor-area">
-                {!selectedDocument && (
-                  <div className="boa-empty-state">
-                    Select a document to view and edit.
-                  </div>
-                )}
+                <div className="boa-doc-stats">
+                  <article>
+                    <span>Total docs</span>
+                    <strong>{appState.documents.length}</strong>
+                  </article>
+                  <article>
+                    <span>Starred</span>
+                    <strong>{appState.documents.filter((document) => document.starred).length}</strong>
+                  </article>
+                  <article>
+                    <span>Total tokens</span>
+                    <strong>{totalDocumentTokens.toLocaleString()}</strong>
+                  </article>
+                </div>
 
-                {selectedDocument && (
-                  <>
-                    <div className="boa-editor-head">
-                      <div>
-                        <h3>{selectedDocument.title}</h3>
-                        <p>
-                          {selectedDocument.kind === "editable"
-                            ? "Editable Lexical document"
-                            : "Uploaded read-only file"}{" "}
-                          · {selectedDocument.tokenCount.toLocaleString()} tokens
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => handleDeleteDocument(selectedDocument.id)}
-                      >
-                        Delete
+                <div className="boa-two-up">
+                  <aside className="boa-sidebar">
+                    <div className="boa-sidebar-section">
+                      <h3>Create editable draft</h3>
+                      <input
+                        type="text"
+                        placeholder="Document title"
+                        value={newDocumentTitle}
+                        onChange={(event) => setNewDocumentTitle(event.target.value)}
+                      />
+                      <button type="button" onClick={handleCreateEditableDocument}>
+                        Create Draft
                       </button>
                     </div>
 
-                    {selectedDocument.kind === "editable" && (
-                      <>
-                        <LexicalDocumentEditor
-                          key={selectedDocument.id}
-                          initialEditorState={selectedDocument.lexicalState}
-                          onChange={({ plainText, serializedState }) => {
-                            setDraftContent(plainText);
-                            setDraftLexicalState(serializedState);
-                            setDraftDirty(true);
-                          }}
+                    <div className="boa-sidebar-section">
+                      <h3>Upload file</h3>
+                      <label className="boa-upload">
+                        <span>{isUploading ? "Uploading..." : "Select documents"}</span>
+                        <input
+                          type="file"
+                          accept={UPLOAD_ACCEPT_LIST}
+                          multiple
+                          disabled={isUploading}
+                          onChange={handleUploadFiles}
                         />
+                      </label>
+                      <p className="boa-note tiny">
+                        Supported: .docx, .xls/.xlsx, .txt/.md/.csv/.json/.xml and other
+                        text-based formats. Not supported: PDF, PowerPoint, images.
+                      </p>
+                    </div>
 
-                        <div className="boa-editor-actions">
+                    <div className="boa-sidebar-section grow">
+                      <h3>Library</h3>
+                      <div className="boa-library-controls">
+                        <input
+                          type="search"
+                          placeholder="Search by title or extension..."
+                          value={documentQuery}
+                          onChange={(event) => setDocumentQuery(event.target.value)}
+                        />
+                        <div className="boa-chip-row">
+                          <button
+                            type="button"
+                            className={documentKindFilter === "all" ? "active" : ""}
+                            onClick={() => setDocumentKindFilter("all")}
+                          >
+                            All
+                          </button>
+                          <button
+                            type="button"
+                            className={documentKindFilter === "editable" ? "active" : ""}
+                            onClick={() => setDocumentKindFilter("editable")}
+                          >
+                            Editable
+                          </button>
+                          <button
+                            type="button"
+                            className={documentKindFilter === "uploaded" ? "active" : ""}
+                            onClick={() => setDocumentKindFilter("uploaded")}
+                          >
+                            Uploaded
+                          </button>
+                        </div>
+                        <div className="boa-chip-row">
+                          <button
+                            type="button"
+                            className={documentStarFilter === "all" ? "active" : ""}
+                            onClick={() => setDocumentStarFilter("all")}
+                          >
+                            Any Priority
+                          </button>
+                          <button
+                            type="button"
+                            className={documentStarFilter === "starred" ? "active" : ""}
+                            onClick={() => setDocumentStarFilter("starred")}
+                          >
+                            Starred
+                          </button>
+                        </div>
+                        <label className="boa-sort-row">
+                          <span>Sort</span>
+                          <select
+                            value={documentSort}
+                            onChange={(event) =>
+                              setDocumentSort(event.target.value as DocumentSort)
+                            }
+                          >
+                            <option value="updated">Last updated</option>
+                            <option value="title">Title</option>
+                            <option value="tokens">Token count</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <ul className="boa-list">
+                        {filteredDocuments.length === 0 && (
+                          <li className="boa-empty">No documents match this filter.</li>
+                        )}
+
+                        {documentStarFilter === "all" && starredDocuments.length > 0 && (
+                          <li className="boa-list-section-label">Starred</li>
+                        )}
+                        {documentStarFilter === "all" &&
+                          starredDocuments.map((document) => (
+                            <li key={document.id}>
+                              <div
+                                className={`boa-list-item ${
+                                  selectedDocumentId === document.id ? "active" : ""
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="boa-list-main"
+                                  onClick={() => setSelectedDocumentId(document.id)}
+                                >
+                                  <strong>{document.title}</strong>
+                                  <span>
+                                    {document.kind === "editable" ? "Editable" : "Uploaded"} ·{" "}
+                                    {document.tokenCount.toLocaleString()} tokens
+                                  </span>
+                                  <small>{formatDate(document.updatedAt)}</small>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="boa-star-toggle"
+                                  onClick={() => handleToggleDocumentStar(document.id)}
+                                  aria-label={`Remove star from ${document.title}`}
+                                >
+                                  ★
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+
+                        {(documentStarFilter === "starred"
+                          ? starredDocuments
+                          : regularDocuments
+                        ).length > 0 && <li className="boa-list-section-label">Results</li>}
+
+                        {(documentStarFilter === "starred"
+                          ? starredDocuments
+                          : regularDocuments
+                        ).map((document) => (
+                          <li key={document.id}>
+                            <div
+                              className={`boa-list-item ${
+                                selectedDocumentId === document.id ? "active" : ""
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className="boa-list-main"
+                                onClick={() => setSelectedDocumentId(document.id)}
+                              >
+                                <strong>{document.title}</strong>
+                                <span>
+                                  {document.kind === "editable" ? "Editable" : "Uploaded"} ·{" "}
+                                  {document.tokenCount.toLocaleString()} tokens
+                                </span>
+                                <small>{formatDate(document.updatedAt)}</small>
+                              </button>
+                              <button
+                                type="button"
+                                className={
+                                  document.starred
+                                    ? "boa-star-toggle"
+                                    : "boa-star-toggle inactive"
+                                }
+                                onClick={() => handleToggleDocumentStar(document.id)}
+                                aria-label={
+                                  document.starred
+                                    ? `Remove star from ${document.title}`
+                                    : `Star ${document.title}`
+                                }
+                              >
+                                {document.starred ? "★" : "☆"}
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </aside>
+
+                  <article className="boa-editor-area">
+                    {!selectedDocument && (
+                      <div className="boa-empty-state">
+                        Select a document to view and edit.
+                      </div>
+                    )}
+
+                    {selectedDocument && (
+                      <>
+                        <div className="boa-editor-head">
+                          <div>
+                            <input
+                              type="text"
+                              className="boa-title-input"
+                              value={documentTitleDraft}
+                              onChange={(event) =>
+                                setDocumentTitleDraft(event.target.value)
+                              }
+                              onBlur={handleDocumentTitleCommit}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  handleDocumentTitleCommit();
+                                  (event.currentTarget as HTMLInputElement).blur();
+                                }
+                              }}
+                              aria-label="Document title"
+                            />
+                            <p>
+                              {selectedDocument.kind === "editable"
+                                ? "Editable Lexical document"
+                                : "Uploaded read-only file"}{" "}
+                              · {selectedDocument.tokenCount.toLocaleString()} tokens
+                            </p>
+                          </div>
+                          <div className="boa-editor-head-actions">
+                            <button
+                              type="button"
+                              className={
+                                selectedDocument.starred
+                                  ? "boa-head-star"
+                                  : "boa-head-star inactive"
+                              }
+                              onClick={() => handleToggleDocumentStar(selectedDocument.id)}
+                            >
+                              {selectedDocument.starred ? "★ Starred" : "☆ Star"}
+                            </button>
+                            <button
+                              type="button"
+                              className="danger"
+                              onClick={() => handleDeleteDocument(selectedDocument.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+
+                        {selectedDocument.kind === "editable" && (
+                          <>
+                            <LexicalDocumentEditor
+                              key={selectedDocument.id}
+                              initialEditorState={selectedDocument.lexicalState}
+                              onChange={({ plainText, serializedState }) => {
+                                setDraftContent(plainText);
+                                setDraftLexicalState(serializedState);
+                                setDraftDirty(true);
+                              }}
+                            />
+
+                            <div className="boa-editor-actions">
+                              <span>
+                                Unsaved tokens preview: {draftContent.trim().length > 0
+                                  ? "ready"
+                                  : "empty"}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={isSavingDocument || !draftDirty}
+                                onClick={handleSaveEditableDocument}
+                              >
+                                {isSavingDocument ? "Saving..." : "Save Document"}
+                              </button>
+                            </div>
+                          </>
+                        )}
+
+                        {selectedDocument.kind === "uploaded" && (
+                          <pre className="boa-readonly-preview">{selectedDocument.content}</pre>
+                        )}
+                      </>
+                    )}
+                  </article>
+                </div>
+              </section>
+            )}
+
+            {activeTab === "advisors" && (
+              <section className="boa-panel">
+                <div className="boa-panel-head">
+                  <h2>Advisor Configuration</h2>
+                  <p>
+                    Create advisors, run OpenAI research for bio and quotes, then edit and
+                    enable the voices you want in debate mode.
+                  </p>
+                </div>
+
+                <div className="boa-two-up">
+                  <aside className="boa-sidebar">
+                    <div className="boa-sidebar-section">
+                      <h3>Add advisor</h3>
+                      <input
+                        type="text"
+                        placeholder="e.g. Charlie Munger"
+                        value={newAdvisorName}
+                        onChange={(event) => setNewAdvisorName(event.target.value)}
+                      />
+                      <button type="button" onClick={handleCreateAdvisor}>
+                        Add Advisor
+                      </button>
+                    </div>
+
+                    <div className="boa-sidebar-section grow">
+                      <h3>Advisor list</h3>
+                      <ul className="boa-list">
+                        {appState.advisors.length === 0 && (
+                          <li className="boa-empty">No advisors yet.</li>
+                        )}
+                        {appState.advisors.map((advisor) => (
+                          <li key={advisor.id}>
+                            <button
+                              type="button"
+                              className={`boa-list-item ${
+                                selectedAdvisorId === advisor.id ? "active" : ""
+                              }`}
+                              onClick={() => setSelectedAdvisorId(advisor.id)}
+                            >
+                              <strong>{advisor.name || "Unnamed advisor"}</strong>
+                              <span>{advisor.enabled ? "Enabled" : "Disabled"}</span>
+                              <small>
+                                {advisor.lastResearchedAt
+                                  ? `Researched ${formatDate(advisor.lastResearchedAt)}`
+                                  : "Research not run yet"}
+                              </small>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </aside>
+
+                  <article className="boa-editor-area">
+                    {!selectedAdvisor && (
+                      <div className="boa-empty-state">
+                        Select an advisor to configure profile and quotes.
+                      </div>
+                    )}
+
+                    {selectedAdvisor && (
+                      <>
+                        <div className="boa-editor-head">
+                          <div>
+                            <h3>Advisor Profile</h3>
+                            <p>
+                              {selectedAdvisor.enabled
+                                ? "Participates in debate mode"
+                                : "Excluded from debate mode"}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => handleDeleteAdvisor(selectedAdvisor.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+
+                        <label className="boa-field">
+                          <span>Name</span>
+                          <input
+                            type="text"
+                            value={selectedAdvisor.name}
+                            onChange={(event) =>
+                              updateAdvisor(selectedAdvisor.id, (advisor) => ({
+                                ...advisor,
+                                name: event.target.value,
+                                updatedAt: nowIso(),
+                              }))
+                            }
+                          />
+                        </label>
+
+                        <label className="boa-field checkbox">
+                          <input
+                            type="checkbox"
+                            checked={selectedAdvisor.enabled}
+                            onChange={(event) =>
+                              updateAdvisor(selectedAdvisor.id, (advisor) => ({
+                                ...advisor,
+                                enabled: event.target.checked,
+                                updatedAt: nowIso(),
+                              }))
+                            }
+                          />
+                          <span>Enable this advisor in future debate sessions</span>
+                        </label>
+
+                        <div className="boa-editor-actions wrap">
                           <span>
-                            Unsaved tokens preview: {draftContent.trim().length > 0
-                              ? "ready"
-                              : "empty"}
+                            {selectedAdvisor.lastResearchedAt
+                              ? `Last researched ${formatDate(
+                                  selectedAdvisor.lastResearchedAt,
+                                )}`
+                              : "No research result yet"}
                           </span>
                           <button
                             type="button"
-                            disabled={isSavingDocument || !draftDirty}
-                            onClick={handleSaveEditableDocument}
+                            onClick={handleResearchAdvisor}
+                            disabled={researchingAdvisorId === selectedAdvisor.id}
                           >
-                            {isSavingDocument ? "Saving..." : "Save Document"}
+                            {researchingAdvisorId === selectedAdvisor.id
+                              ? "Researching..."
+                              : "Research Advisor"}
                           </button>
                         </div>
+
+                        <label className="boa-field">
+                          <span>Bio (4-6 paragraphs)</span>
+                          <textarea
+                            rows={10}
+                            value={selectedAdvisor.bio}
+                            onChange={(event) =>
+                              updateAdvisor(selectedAdvisor.id, (advisor) => ({
+                                ...advisor,
+                                bio: event.target.value,
+                                updatedAt: nowIso(),
+                              }))
+                            }
+                          />
+                        </label>
+
+                        <label className="boa-field">
+                          <span>Quotes (one per line)</span>
+                          <textarea
+                            rows={8}
+                            value={quotesToTextAreaValue(selectedAdvisor.quotes)}
+                            onChange={(event) =>
+                              updateAdvisor(selectedAdvisor.id, (advisor) => ({
+                                ...advisor,
+                                quotes: textAreaValueToQuotes(event.target.value),
+                                updatedAt: nowIso(),
+                              }))
+                            }
+                          />
+                        </label>
                       </>
                     )}
-
-                    {selectedDocument.kind === "uploaded" && (
-                      <pre className="boa-readonly-preview">{selectedDocument.content}</pre>
-                    )}
-                  </>
-                )}
-              </article>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "advisors" && (
-          <section className="boa-panel">
-            <div className="boa-panel-head">
-              <h2>Advisor Configuration</h2>
-              <p>
-                Create advisors, run OpenAI research for bio and quotes, then edit and
-                enable the voices you want in debate mode.
-              </p>
-            </div>
-
-            <div className="boa-two-up">
-              <aside className="boa-sidebar">
-                <div className="boa-sidebar-section">
-                  <h3>Add advisor</h3>
-                  <input
-                    type="text"
-                    placeholder="e.g. Charlie Munger"
-                    value={newAdvisorName}
-                    onChange={(event) => setNewAdvisorName(event.target.value)}
-                  />
-                  <button type="button" onClick={handleCreateAdvisor}>
-                    Add Advisor
-                  </button>
+                  </article>
                 </div>
+              </section>
+            )}
 
-                <div className="boa-sidebar-section">
-                  <h3>Advisor list</h3>
-                  <ul className="boa-list">
-                    {appState.advisors.length === 0 && (
-                      <li className="boa-empty">No advisors yet.</li>
-                    )}
-                    {appState.advisors.map((advisor) => (
-                      <li key={advisor.id}>
-                        <button
-                          type="button"
-                          className={`boa-list-item ${
-                            selectedAdvisorId === advisor.id ? "active" : ""
-                          }`}
-                          onClick={() => setSelectedAdvisorId(advisor.id)}
-                        >
-                          <strong>{advisor.name || "Unnamed advisor"}</strong>
-                          <span>{advisor.enabled ? "Enabled" : "Disabled"}</span>
-                          <small>
-                            {advisor.lastResearchedAt
-                              ? `Researched ${formatDate(advisor.lastResearchedAt)}`
-                              : "Research not run yet"}
-                          </small>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </aside>
-
-              <article className="boa-editor-area">
-                {!selectedAdvisor && (
-                  <div className="boa-empty-state">
-                    Select an advisor to configure profile and quotes.
-                  </div>
-                )}
-
-                {selectedAdvisor && (
-                  <>
-                    <div className="boa-editor-head">
-                      <div>
-                        <h3>Advisor Profile</h3>
-                        <p>
-                          {selectedAdvisor.enabled
-                            ? "Participates in debate mode"
-                            : "Excluded from debate mode"}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => handleDeleteAdvisor(selectedAdvisor.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-
-                    <label className="boa-field">
-                      <span>Name</span>
-                      <input
-                        type="text"
-                        value={selectedAdvisor.name}
-                        onChange={(event) =>
-                          updateAdvisor(selectedAdvisor.id, (advisor) => ({
-                            ...advisor,
-                            name: event.target.value,
-                            updatedAt: nowIso(),
-                          }))
-                        }
-                      />
-                    </label>
-
-                    <label className="boa-field checkbox">
-                      <input
-                        type="checkbox"
-                        checked={selectedAdvisor.enabled}
-                        onChange={(event) =>
-                          updateAdvisor(selectedAdvisor.id, (advisor) => ({
-                            ...advisor,
-                            enabled: event.target.checked,
-                            updatedAt: nowIso(),
-                          }))
-                        }
-                      />
-                      <span>Enable this advisor in future debate sessions</span>
-                    </label>
-
-                    <div className="boa-editor-actions wrap">
-                      <span>
-                        {selectedAdvisor.lastResearchedAt
-                          ? `Last researched ${formatDate(
-                              selectedAdvisor.lastResearchedAt,
-                            )}`
-                          : "No research result yet"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleResearchAdvisor}
-                        disabled={researchingAdvisorId === selectedAdvisor.id}
-                      >
-                        {researchingAdvisorId === selectedAdvisor.id
-                          ? "Researching..."
-                          : "Research Advisor"}
-                      </button>
-                    </div>
-
-                    <label className="boa-field">
-                      <span>Bio (4-6 paragraphs)</span>
-                      <textarea
-                        rows={10}
-                        value={selectedAdvisor.bio}
-                        onChange={(event) =>
-                          updateAdvisor(selectedAdvisor.id, (advisor) => ({
-                            ...advisor,
-                            bio: event.target.value,
-                            updatedAt: nowIso(),
-                          }))
-                        }
-                      />
-                    </label>
-
-                    <label className="boa-field">
-                      <span>Quotes (one per line)</span>
-                      <textarea
-                        rows={8}
-                        value={quotesToTextAreaValue(selectedAdvisor.quotes)}
-                        onChange={(event) =>
-                          updateAdvisor(selectedAdvisor.id, (advisor) => ({
-                            ...advisor,
-                            quotes: textAreaValueToQuotes(event.target.value),
-                            updatedAt: nowIso(),
-                          }))
-                        }
-                      />
-                    </label>
-                  </>
-                )}
-              </article>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "chat" && (
-          <section className="boa-panel boa-chat-placeholder">
-            <h2>Debate Chat (Next Build Step)</h2>
-            <p>
-              This section will host the multi-advisor debate experience. The next
-              iteration can orchestrate enabled advisors as an agent swarm, grounded by
-              your stored documents and profile context.
-            </p>
-            <ul>
-              <li>Enabled advisors: {appState.advisors.filter((a) => a.enabled).length}</li>
-              <li>Documents loaded: {appState.documents.length}</li>
-              <li>
-                Ready for setup: {appState.settings.openaiApiKey.trim() ? "Yes" : "No"}
-              </li>
-            </ul>
-          </section>
-        )}
+            {activeTab === "chat" && (
+              <section className="boa-panel boa-chat-placeholder">
+                <h2>Debate Chat (Next Build Step)</h2>
+                <p>
+                  This section will host the multi-advisor debate experience. The next
+                  iteration can orchestrate enabled advisors as an agent swarm, grounded by
+                  your stored documents and profile context.
+                </p>
+                <ul>
+                  <li>Enabled advisors: {appState.advisors.filter((a) => a.enabled).length}</li>
+                  <li>Documents loaded: {appState.documents.length}</li>
+                  <li>
+                    Ready for setup: {appState.settings.openaiApiKey.trim() ? "Yes" : "No"}
+                  </li>
+                </ul>
+              </section>
+            )}
+          </div>
+        </div>
       </section>
     </main>
   );

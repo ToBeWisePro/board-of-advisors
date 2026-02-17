@@ -8,7 +8,6 @@ interface ResearchRequestBody {
   advisorName?: unknown;
   userName?: unknown;
   businessContext?: unknown;
-  model?: unknown;
 }
 
 interface ResearchResponsePayload {
@@ -92,10 +91,6 @@ export async function POST(request: Request) {
     const userName = typeof body.userName === "string" ? body.userName.trim() : "";
     const businessContext =
       typeof body.businessContext === "string" ? body.businessContext.trim() : "";
-    const model =
-      typeof body.model === "string" && body.model.trim().length > 0
-        ? body.model.trim()
-        : DEFAULT_MODEL;
 
     if (!apiKey) {
       return NextResponse.json(
@@ -123,7 +118,7 @@ export async function POST(request: Request) {
     ].join("\n\n");
 
     const response = await client.responses.create({
-      model,
+      model: DEFAULT_MODEL,
       reasoning: { effort: "low" },
       input: [
         { role: "system", content: SYSTEM_PROMPT },

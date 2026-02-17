@@ -6,7 +6,6 @@ export const DEFAULT_STATE: AppState = {
   settings: {
     userName: "",
     openaiApiKey: "",
-    researchModel: "o4-mini-deep-research",
   },
   documents: [],
   advisors: [],
@@ -32,6 +31,7 @@ export function createEditableDocument(title: string): BusinessDocument {
     id: createId("doc"),
     title: title.trim() || "Untitled Draft",
     kind: "editable",
+    starred: false,
     extension: "lexical",
     content: "",
     lexicalState: null,
@@ -53,6 +53,7 @@ export function createUploadedDocument(params: {
     id: createId("doc"),
     title: params.title.trim() || "Uploaded Document",
     kind: "uploaded",
+    starred: false,
     extension: params.extension,
     content: params.content,
     lexicalState: null,
@@ -97,11 +98,6 @@ export function sanitizeState(raw: unknown): AppState {
       typeof settingsRaw.openaiApiKey === "string"
         ? settingsRaw.openaiApiKey
         : "",
-    researchModel:
-      typeof settingsRaw.researchModel === "string" &&
-      settingsRaw.researchModel.trim().length > 0
-        ? settingsRaw.researchModel
-        : DEFAULT_STATE.settings.researchModel,
   };
 
   const documents: BusinessDocument[] = documentsRaw
@@ -113,6 +109,7 @@ export function sanitizeState(raw: unknown): AppState {
           : createId("doc"),
       title: typeof item.title === "string" ? item.title : "Untitled",
       kind: item.kind === "uploaded" ? "uploaded" : "editable",
+      starred: item.starred === true,
       extension: typeof item.extension === "string" ? item.extension : "txt",
       content: typeof item.content === "string" ? item.content : "",
       lexicalState:

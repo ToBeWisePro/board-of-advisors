@@ -5,13 +5,13 @@ export type DocumentKind = "editable" | "uploaded";
 export interface AppSettings {
   userName: string;
   openaiApiKey: string;
-  researchModel: string;
 }
 
 export interface BusinessDocument {
   id: string;
   title: string;
   kind: DocumentKind;
+  starred: boolean;
   extension: string;
   content: string;
   lexicalState: string | null;

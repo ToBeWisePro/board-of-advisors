@@ -4,7 +4,7 @@ A local-first Next.js app for preparing a debate-style advisory council.
 
 ## What It Does Today
 
-- Stores user settings locally (name, OpenAI API key, research model).
+- Stores user settings locally (name and OpenAI API key).
 - Lets users create editable business documents with a Lexical editor.
 - Lets users upload uneditable text-based documents (`.docx`, `.xls/.xlsx`, `.txt`, `.md`, `.json`, `.xml`, `.csv`, and similar text formats).
 - Rejects unsupported uploads (`.pdf`, PowerPoint files, image files).

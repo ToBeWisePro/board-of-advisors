@@ -1,26 +1,815 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --boa-bg: #f5f4ef;
+  --boa-ink: #262621;
+  --boa-card: #fbfaf7;
+  --boa-card-strong: #f0eee8;
+  --boa-border: #d9d4c8;
+  --boa-muted: #6f6a5f;
+  --boa-accent: #c26d4c;
+  --boa-accent-soft: #d98b6e;
+  --boa-success: #3c7758;
+  --boa-danger: #ac4b3f;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(217, 187, 164, 0.2), transparent 42%),
+    radial-gradient(circle at 86% 14%, rgba(175, 178, 188, 0.16), transparent 38%),
+    linear-gradient(135deg, #faf9f6 0%, #f1eee8 42%, #e8e3d9 100%);
+  color: var(--boa-ink);
+  font-family: var(--font-body), sans-serif;
+}
+
+h1,
+h2,
+h3,
+strong {
+  font-family: var(--font-display), serif;
+  letter-spacing: 0.01em;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+}
+
+.boa-shell {
+  position: relative;
+  min-height: 100dvh;
+  height: 100dvh;
+  padding: clamp(1rem, 1vw + 0.8rem, 2rem);
+}
+
+.boa-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(93, 88, 76, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(93, 88, 76, 0.08) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.58), transparent 95%);
+}
+
+.boa-spotlight {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(45vw, 420px);
+  height: min(45vw, 420px);
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(217, 187, 164, 0.22), transparent 68%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.boa-app-card {
+  position: relative;
+  z-index: 1;
+  margin-inline: auto;
+  width: min(1920px, 100%);
+  min-height: calc(100dvh - clamp(2rem, 2vw + 1.4rem, 4rem));
+  border: 1px solid var(--boa-border);
+  border-radius: 28px;
+  padding: clamp(1rem, 1.2vw + 0.9rem, 2rem);
+  background: linear-gradient(180deg, rgba(255, 254, 251, 0.92), rgba(243, 240, 233, 0.95));
+  box-shadow:
+    0 30px 55px rgba(51, 43, 31, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  animation: boa-rise 450ms ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+  overflow: hidden;
+}
+
+@keyframes boa-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.boa-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.boa-kicker {
+  margin: 0;
+  text-transform: uppercase;
+  font-size: 0.77rem;
+  letter-spacing: 0.12em;
+  color: var(--boa-muted);
+}
+
+.boa-header h1 {
+  margin: 0.4rem 0 0;
+  font-size: clamp(1.85rem, 2vw + 1.2rem, 3rem);
+  line-height: 1;
+}
+
+.boa-subtitle {
+  max-width: 68ch;
+  margin: 0.7rem 0 0;
+  color: var(--boa-muted);
+  line-height: 1.5;
+}
+
+.boa-local-pill {
+  min-width: 220px;
+  max-width: 340px;
+  border-radius: 16px;
+  border: 1px solid rgba(102, 94, 79, 0.32);
+  background: rgba(248, 244, 236, 0.74);
+  padding: 0.8rem 0.95rem;
+}
+
+.boa-local-pill span {
+  display: block;
+  font-weight: 700;
+  color: var(--boa-ink);
+  margin-bottom: 0.25rem;
+}
+
+.boa-local-pill small {
+  color: var(--boa-muted);
+  line-height: 1.4;
+}
+
+.boa-workspace {
+  display: grid;
+  grid-template-columns: minmax(205px, 260px) minmax(0, 1fr);
+  gap: 0.85rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.boa-content-stage {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.boa-tabs {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.boa-tabs-rail {
+  position: sticky;
+  top: 0.25rem;
+  align-self: start;
+  border: 1px solid rgba(105, 97, 83, 0.28);
+  border-radius: 16px;
+  background: rgba(248, 245, 238, 0.68);
+  padding: 0.55rem;
+}
+
+.boa-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  border: 1px solid rgba(106, 97, 82, 0.34);
+  border-radius: 14px;
+  padding: 0.7rem 0.8rem;
+  background: rgba(252, 250, 245, 0.78);
+  color: var(--boa-ink);
+  text-align: left;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.boa-tab strong {
+  font-size: 1.08rem;
+}
+
+.boa-tab span {
+  font-size: 0.8rem;
+  color: var(--boa-muted);
+}
+
+.boa-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(194, 109, 76, 0.5);
+}
+
+.boa-tab.active {
+  background: linear-gradient(145deg, rgba(250, 242, 234, 0.97), rgba(246, 237, 227, 0.97));
+  border-color: rgba(194, 109, 76, 0.58);
+  color: var(--boa-ink);
+}
+
+.boa-tab.active span {
+  color: #7a5e4a;
+}
+
+.boa-panel {
+  border: 1px solid rgba(104, 97, 84, 0.26);
+  border-radius: 20px;
+  padding: clamp(0.95rem, 0.7vw + 0.7rem, 1.4rem);
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.92), rgba(247, 242, 234, 0.95));
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.boa-panel-head {
+  margin-bottom: 1rem;
+}
+
+.boa-panel-head h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 1.2vw + 1rem, 2rem);
+}
+
+.boa-panel-head p {
+  margin: 0.5rem 0 0;
+  color: var(--boa-muted);
+  line-height: 1.45;
+}
+
+.boa-doc-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+}
+
+.boa-doc-stats article {
+  border: 1px solid rgba(104, 97, 84, 0.26);
+  border-radius: 12px;
+  background: rgba(252, 249, 242, 0.72);
+  padding: 0.55rem 0.65rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.boa-doc-stats span {
+  color: var(--boa-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.boa-doc-stats strong {
+  font-size: 1.22rem;
+}
+
+.boa-messages {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.boa-message {
+  margin: 0;
+  border-radius: 12px;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid;
+  font-size: 0.92rem;
+}
+
+.boa-message.success {
+  border-color: rgba(47, 116, 88, 0.5);
+  background: rgba(47, 116, 88, 0.12);
+}
+
+.boa-message.error {
+  border-color: rgba(164, 55, 45, 0.46);
+  background: rgba(164, 55, 45, 0.12);
+}
+
+.boa-field {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+.boa-field > span {
+  font-size: 0.85rem;
+  color: var(--boa-muted);
+}
+
+.boa-field input,
+.boa-field textarea,
+.boa-sidebar input,
+.boa-sidebar button,
+.boa-upload {
+  font: inherit;
+}
+
+.boa-field input,
+.boa-field textarea,
+.boa-sidebar input {
+  width: 100%;
+  border: 1px solid rgba(103, 96, 82, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 254, 250, 0.84);
+  padding: 0.66rem 0.78rem;
+  color: var(--boa-ink);
+}
+
+.boa-field input:focus,
+.boa-field textarea:focus,
+.boa-sidebar input:focus,
+.lexical-input:focus {
+  outline: 2px solid rgba(194, 109, 76, 0.42);
+  outline-offset: 1px;
+}
+
+.boa-field textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.5;
+}
+
+.boa-field.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.boa-field.checkbox input {
+  width: auto;
+  margin: 0;
+}
+
+.boa-two-up {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 0.9rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.boa-sidebar {
+  border: 1px solid rgba(103, 96, 82, 0.26);
+  border-radius: 16px;
+  background: rgba(247, 244, 236, 0.88);
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.boa-sidebar-section h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1.12rem;
+}
+
+.boa-sidebar-section.grow {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.boa-library-controls {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.boa-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.boa-chip-row button {
+  border: 1px solid rgba(104, 96, 82, 0.32) !important;
+  border-radius: 999px !important;
+  padding: 0.25rem 0.6rem !important;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  background: rgba(255, 253, 247, 0.9) !important;
+  color: var(--boa-muted);
+  font-weight: 610;
+}
+
+.boa-chip-row button.active {
+  background: rgba(194, 109, 76, 0.15) !important;
+  border-color: rgba(194, 109, 76, 0.5) !important;
+  color: var(--boa-ink);
+}
+
+.boa-sort-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+}
+
+.boa-sort-row span {
+  color: var(--boa-muted);
+  font-size: 0.78rem;
+}
+
+.boa-sort-row select {
+  border: 1px solid rgba(104, 96, 82, 0.32);
+  border-radius: 9px;
+  background: rgba(255, 253, 248, 0.85);
+  padding: 0.25rem 0.45rem;
+  color: var(--boa-ink);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.boa-sidebar-section button,
+.boa-editor-actions button,
+.boa-editor-head button {
+  border: 1px solid rgba(104, 96, 82, 0.32);
+  border-radius: 10px;
+  padding: 0.52rem 0.72rem;
+  background: linear-gradient(180deg, #fffdf7 0%, #f0ebde 100%);
+  color: var(--boa-ink);
+  font-weight: 640;
+  cursor: pointer;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.boa-sidebar-section button:hover,
+.boa-editor-actions button:hover,
+.boa-editor-head button:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.1);
+}
+
+.boa-sidebar-section button:disabled,
+.boa-editor-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.boa-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(104, 96, 82, 0.45);
+  border-radius: 12px;
+  padding: 0.7rem;
+  text-align: center;
+  background: rgba(255, 252, 245, 0.72);
+  cursor: pointer;
+  font-weight: 620;
+}
+
+.boa-upload input {
+  display: none;
+}
+
+.boa-note {
+  color: var(--boa-muted);
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.boa-note.tiny {
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.boa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.boa-list-section-label {
+  margin: 0.2rem 0 0.05rem;
+  padding: 0 0.2rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--boa-muted);
+  font-weight: 620;
+}
+
+.boa-list-item {
+  width: 100%;
+  border: 1px solid rgba(104, 96, 82, 0.25);
+  border-radius: 11px;
+  background: rgba(255, 252, 247, 0.76);
+  padding: 0.54rem 0.6rem;
+  text-align: left;
+  display: grid;
+  gap: 0.3rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  color: var(--boa-ink);
+}
+
+.boa-sidebar-section .boa-list-main {
+  appearance: none;
+  border: 0 !important;
+  background: transparent;
+  padding: 0 !important;
+  margin: 0;
+  display: grid;
+  gap: 0.2rem;
+  text-align: left;
+  color: inherit;
+  width: 100%;
+}
+
+.boa-star-toggle {
+  border: 1px solid rgba(194, 109, 76, 0.45) !important;
+  background: rgba(194, 109, 76, 0.13) !important;
+  border-radius: 8px !important;
+  color: var(--boa-accent) !important;
+  font-size: 0.82rem !important;
+  padding: 0.24rem 0.48rem !important;
+  line-height: 1;
+  min-width: 2.1rem;
+}
+
+.boa-star-toggle.inactive {
+  border-color: rgba(104, 96, 82, 0.3) !important;
+  background: rgba(250, 246, 238, 0.68) !important;
+  color: var(--boa-muted) !important;
+}
+
+.boa-list-item strong {
+  font-size: 1.03rem;
+  line-height: 1.2;
+}
+
+.boa-list-item span,
+.boa-list-item small {
+  color: var(--boa-muted);
+  font-size: 0.78rem;
+}
+
+.boa-list-item.active {
+  background: rgba(250, 242, 234, 0.95);
+  border-color: rgba(194, 109, 76, 0.64);
+}
+
+.boa-empty {
+  border: 1px dashed rgba(104, 96, 82, 0.34);
+  border-radius: 10px;
+  padding: 0.7rem;
+  color: var(--boa-muted);
+  text-align: center;
+}
+
+.boa-editor-area {
+  border: 1px solid rgba(104, 96, 82, 0.25);
+  border-radius: 16px;
+  background: rgba(255, 253, 248, 0.78);
+  padding: 0.85rem;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.boa-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.boa-editor-head p {
+  margin: 0.3rem 0 0;
+  color: var(--boa-muted);
+  font-size: 0.9rem;
+}
+
+.boa-editor-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.boa-title-input {
+  width: 100%;
+  border: 1px solid rgba(104, 96, 82, 0.3);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.85);
+  color: var(--boa-ink);
+  font-family: var(--font-display), serif;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  padding: 0.26rem 0.55rem;
+}
+
+.boa-title-input:focus {
+  outline: 2px solid rgba(194, 109, 76, 0.42);
+  outline-offset: 1px;
+}
+
+.boa-head-star {
+  border-color: rgba(194, 109, 76, 0.45) !important;
+  background: rgba(194, 109, 76, 0.16) !important;
+  color: var(--boa-accent) !important;
+}
+
+.boa-head-star.inactive {
+  border-color: rgba(104, 96, 82, 0.3) !important;
+  background: rgba(250, 246, 238, 0.68) !important;
+  color: var(--boa-muted) !important;
+}
+
+.boa-editor-head .danger {
+  border-color: rgba(164, 55, 45, 0.4);
+  color: var(--boa-danger);
+}
+
+.boa-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-top: 0.85rem;
+}
+
+.boa-editor-actions span {
+  color: var(--boa-muted);
+  font-size: 0.86rem;
+}
+
+.boa-editor-actions.wrap {
+  flex-wrap: wrap;
+}
+
+.boa-empty-state {
+  min-height: 280px;
+  border: 1px dashed rgba(104, 96, 82, 0.35);
+  border-radius: 12px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: var(--boa-muted);
+  font-size: 0.95rem;
+}
+
+.boa-readonly-preview {
+  margin: 0;
+  border: 1px solid rgba(104, 96, 82, 0.25);
+  border-radius: 12px;
+  padding: 0.8rem;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  background: rgba(253, 250, 243, 0.82);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.lexical-shell {
+  position: relative;
+  border: 1px solid rgba(104, 96, 82, 0.3);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, 0.82);
+  min-height: 300px;
+  flex: 1;
+  display: flex;
+}
+
+.lexical-input {
+  min-height: 300px;
+  height: 100%;
+  width: 100%;
+  padding: 0.75rem;
+  line-height: 1.58;
+  overflow: auto;
+}
+
+.editor-paragraph {
+  margin: 0;
+}
+
+.editor-paragraph + .editor-paragraph {
+  margin-top: 0.85rem;
+}
+
+.editor-bold {
+  font-weight: 700;
+}
+
+.editor-italic {
+  font-style: italic;
+}
+
+.editor-underline {
+  text-decoration: underline;
+}
+
+.boa-chat-placeholder ul {
+  margin: 0.8rem 0 0;
+  padding-left: 1rem;
+  color: var(--boa-muted);
+}
+
+.boa-loading-card {
+  margin-inline: auto;
+  max-width: 520px;
+  border-radius: 18px;
+  border: 1px solid rgba(104, 96, 82, 0.35);
+  background: rgba(254, 251, 244, 0.92);
+  padding: 1rem;
+  text-align: center;
+  color: var(--boa-muted);
+}
+
+@media (max-width: 980px) {
+  .boa-shell {
+    min-height: 100vh;
+    height: auto;
+  }
+
+  .boa-app-card {
+    min-height: calc(100vh - 1.3rem);
+  }
+
+  .boa-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .boa-tabs-rail {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .boa-two-up {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .boa-doc-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .boa-shell {
+    padding: 0.65rem;
+  }
+
+  .boa-app-card {
+    border-radius: 20px;
+    padding: 0.75rem;
+  }
+
+  .boa-tab strong {
+    font-size: 0.96rem;
+  }
+
+  .boa-tab span {
+    font-size: 0.74rem;
+  }
+
+  .boa-editor-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .boa-doc-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .boa-editor-head-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }

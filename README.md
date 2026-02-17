@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Board of Advisors
 
-## Getting Started
+A local-first Next.js app for preparing a debate-style advisory council.
 
-First, run the development server:
+## What It Does Today
+
+- Stores user settings locally (name and OpenAI API key).
+- Lets users create editable business documents with a Lexical editor.
+- Lets users upload uneditable text-based documents (`.docx`, `.xls/.xlsx`, `.txt`, `.md`, `.json`, `.xml`, `.csv`, and similar text formats).
+- Rejects unsupported uploads (`.pdf`, PowerPoint files, image files).
+- Uses tiktoken to calculate and display token counts for each document.
+- Lets users create advisors, enable/disable them, run research, and edit bios/quotes.
+- Runs advisor research through OpenAI using the user-provided API key (no `.env` key required).
+
+## Local Data Model
+
+All app data is saved in browser local storage. Nothing is persisted to a database yet.
+
+## Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Quality Checks
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+pnpm lint
+pnpm build
+```
 
-## Learn More
+## Deploying to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+This is a standard Next.js App Router project and can be deployed directly on Vercel.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+No OpenAI server key env var is required for this template because users supply their own API key in app settings.

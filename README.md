@@ -1,4 +1,4 @@
-# Board of Advisors
+# MM/GC board of advisors
 
 A local-first Next.js app for preparing a debate-style advisory council.
 
@@ -9,7 +9,7 @@ A local-first Next.js app for preparing a debate-style advisory council.
 - Lets users upload uneditable text-based documents (`.docx`, `.xls/.xlsx`, `.txt`, `.md`, `.json`, `.xml`, `.csv`, and similar text formats).
 - Rejects unsupported uploads (`.pdf`, PowerPoint files, image files).
 - Uses tiktoken to calculate and display token counts for each document.
-- Lets users create advisors, enable/disable them, run research, and edit bios/quotes.
+- Lets users create advisors, optionally set one or more research source URLs, enable/disable them, run research, and edit bios/quotes.
 - Runs advisor research through OpenAI using the user-provided API key (no `.env` key required).
 
 ## Local Data Model

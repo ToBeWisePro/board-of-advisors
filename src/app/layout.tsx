@@ -14,7 +14,7 @@ const bodyFont = Libre_Franklin({
 });
 
 export const metadata: Metadata = {
-  title: "Board of Advisors",
+  title: "MM/GC board of advisors",
   description:
     "Local-first advisory workspace for documents, advisor profiles, and debate preparation.",
 };

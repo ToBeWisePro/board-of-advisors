@@ -1,84 +1,62 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import {
+  cancelResearchJob,
+  getResearchJob,
+  startResearchJob,
+} from "@/lib/server/research-jobs";
 
 export const runtime = "nodejs";
 
 interface ResearchRequestBody {
   apiKey?: unknown;
   advisorName?: unknown;
+  researchSourceUrls?: unknown;
+  researchSourceUrl?: unknown;
   userName?: unknown;
   businessContext?: unknown;
 }
 
-interface ResearchResponsePayload {
-  bio: string;
-  quotes: string[];
-}
+function normalizeResearchSourceUrls(values: unknown, legacyValue: unknown): string[] {
+  const rawValues: string[] = [];
+  const appendValues = (candidate: unknown) => {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) {
+        if (typeof item === "string") {
+          rawValues.push(...item.split(/\r?\n|,/));
+        }
+      }
+      return;
+    }
 
-const DEFAULT_MODEL = "o4-mini-deep-research";
-
-const SYSTEM_PROMPT = [
-  "You are a meticulous research assistant for a business strategy app.",
-  "Return ONLY valid JSON and no markdown.",
-  "Your JSON must match this schema exactly:",
-  '{"bio":"string","quotes":["string"]}',
-  "Rules:",
-  "- bio must be 4 to 6 paragraphs, each with concrete, factual details.",
-  "- quotes must be direct quotes attributable to the named person.",
-  "- if a quote is disputed or uncertain, do not include it.",
-  "- include short source context in parentheses after each quote when possible.",
-  "- never include keys other than bio and quotes.",
-].join("\n");
-
-function extractJsonBlock(raw: string): unknown {
-  const trimmed = raw.trim();
-
-  if (!trimmed) {
-    throw new Error("Empty model response.");
-  }
-
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    // Continue to fallback parsing.
-  }
-
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch && fencedMatch[1]) {
-    return JSON.parse(fencedMatch[1].trim());
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
-  }
-
-  throw new Error("Could not parse JSON from model response.");
-}
-
-function normalizePayload(payload: unknown): ResearchResponsePayload {
-  if (!payload || typeof payload !== "object") {
-    throw new Error("Research response was not an object.");
-  }
-
-  const record = payload as Record<string, unknown>;
-  if (typeof record.bio !== "string") {
-    throw new Error("Research response missing bio.");
-  }
-
-  const quotes = Array.isArray(record.quotes)
-    ? record.quotes
-        .filter((quote): quote is string => typeof quote === "string")
-        .map((quote) => quote.trim())
-        .filter((quote) => quote.length > 0)
-    : [];
-
-  return {
-    bio: record.bio.trim(),
-    quotes,
+    if (typeof candidate === "string") {
+      rawValues.push(...candidate.split(/\r?\n|,/));
+    }
   };
+
+  appendValues(values);
+  appendValues(legacyValue);
+
+  const parsedUrls = rawValues.map((value) => {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) {
+      return "";
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new Error("Each research source URL must be a valid URL.");
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("Research source URLs must start with http:// or https://.");
+    }
+
+    return parsed.toString();
+  });
+
+  return [...new Set(parsedUrls.filter((url) => url.length > 0))];
 }
 
 export async function POST(request: Request) {
@@ -88,6 +66,10 @@ export async function POST(request: Request) {
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
     const advisorName =
       typeof body.advisorName === "string" ? body.advisorName.trim() : "";
+    const researchSourceUrls = normalizeResearchSourceUrls(
+      body.researchSourceUrls,
+      body.researchSourceUrl,
+    );
     const userName = typeof body.userName === "string" ? body.userName.trim() : "";
     const businessContext =
       typeof body.businessContext === "string" ? body.businessContext.trim() : "";
@@ -106,31 +88,111 @@ export async function POST(request: Request) {
       );
     }
 
-    const client = new OpenAI({ apiKey });
+    if (researchSourceUrls.length === 0) {
+      return NextResponse.json(
+        { error: "At least one source URL is required for research." },
+        { status: 400 },
+      );
+    }
 
-    const userPrompt = [
-      `Advisor name: ${advisorName}`,
-      `User name: ${userName || "Not provided"}`,
-      "Task: Write a 4-6 paragraph biography and collect attributable direct quotes.",
-      "Focus on business leadership style, decision-making patterns, strengths, weaknesses, and strategic perspective.",
-      "Business context (may be partial):",
-      businessContext || "No additional business context provided.",
-    ].join("\n\n");
-
-    const response = await client.responses.create({
-      model: DEFAULT_MODEL,
-      reasoning: { effort: "low" },
-      input: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
+    const jobId = startResearchJob({
+      apiKey,
+      advisorName,
+      researchSourceUrls,
+      userName,
+      businessContext,
     });
 
-    const parsed = normalizePayload(extractJsonBlock(response.output_text));
-
-    return NextResponse.json(parsed);
+    return NextResponse.json({ jobId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Research failed.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+export function GET(request: Request) {
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("jobId")?.trim() ?? "";
+
+  if (!jobId) {
+    return NextResponse.json({ error: "jobId is required." }, { status: 400 });
+  }
+
+  const job = getResearchJob(jobId);
+  if (!job) {
+    return NextResponse.json({ error: "Research job not found." }, { status: 404 });
+  }
+
+  if (job.status === "succeeded" && job.result) {
+    return NextResponse.json({
+      status: "succeeded",
+      stage: job.stage,
+      message: job.statusMessage,
+      updatedAt: job.updatedAt,
+      bio: job.result.bio,
+      quotes: job.result.quotes,
+    });
+  }
+
+  if (job.status === "failed") {
+    return NextResponse.json({
+      status: "failed",
+      stage: job.stage,
+      message: job.statusMessage,
+      updatedAt: job.updatedAt,
+      error: job.error ?? "Research failed.",
+    });
+  }
+
+  if (job.status === "cancelled") {
+    return NextResponse.json({
+      status: "cancelled",
+      stage: job.stage,
+      message: job.statusMessage,
+      updatedAt: job.updatedAt,
+      error: job.error ?? "Research cancelled.",
+    });
+  }
+
+  return NextResponse.json({
+    status: "running",
+    stage: job.stage,
+    message: job.statusMessage,
+    updatedAt: job.updatedAt,
+  });
+}
+
+export function DELETE(request: Request) {
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("jobId")?.trim() ?? "";
+
+  if (!jobId) {
+    return NextResponse.json({ error: "jobId is required." }, { status: 400 });
+  }
+
+  const existingJob = getResearchJob(jobId);
+  if (!existingJob) {
+    return NextResponse.json({ error: "Research job not found." }, { status: 404 });
+  }
+
+  if (existingJob.status === "succeeded") {
+    return NextResponse.json(
+      { error: "Research already completed." },
+      { status: 409 },
+    );
+  }
+
+  if (existingJob.status === "failed") {
+    return NextResponse.json({ status: "failed", error: existingJob.error }, { status: 200 });
+  }
+
+  const cancelledJob = cancelResearchJob(jobId);
+  if (!cancelledJob) {
+    return NextResponse.json({ error: "Research job not found." }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    status: cancelledJob.status,
+    error: cancelledJob.error,
+  });
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 
 import { LexicalDocumentEditor } from "@/components/lexical-document-editor";
+import { selectDocumentsForChat } from "@/lib/chat-context";
 import {
   createAdvisor,
   createEditableDocument,
@@ -17,6 +18,8 @@ import type {
   AppState,
   AppTab,
   BusinessDocument,
+  ChatMessage,
+  ChatThread,
 } from "@/lib/types";
 
 const UPLOAD_ACCEPT_LIST =
@@ -41,7 +44,7 @@ const TAB_LABELS: { id: AppTab; label: string; description: string }[] = [
   {
     id: "chat",
     label: "Debate Chat",
-    description: "Agent swarm (coming next)",
+    description: "Facilitated advisor debate",
   },
 ];
 
@@ -58,14 +61,49 @@ interface TokenCountResponse {
 }
 
 interface ResearchResponse {
-  bio: string;
-  quotes: string[];
+  jobId: string;
+  error?: string;
+}
+
+interface ResearchStatusResponse {
+  status: "running" | "succeeded" | "failed" | "cancelled";
+  stage?: string;
+  message?: string;
+  updatedAt?: string;
+  bio?: string;
+  quotes?: string[];
+  error?: string;
+}
+
+interface ResearchProgressStep {
+  id: string;
+  stage: string;
+  message: string;
+  at: string;
+}
+
+interface DebateResponse {
+  advisorMessages: Array<{
+    advisorId: string;
+    advisorName: string;
+    content: string;
+    sourceDocumentTitles: string[];
+  }>;
+  synthesisMessage: {
+    content: string;
+    sourceDocumentTitles: string[];
+  };
+  warnings?: string[];
   error?: string;
 }
 
 type DocumentKindFilter = "all" | "editable" | "uploaded";
 type DocumentStarFilter = "all" | "starred";
 type DocumentSort = "updated" | "title" | "tokens";
+
+const RESEARCH_POLL_INTERVAL_MS = 2500;
+const RESEARCH_POLL_REQUEST_TIMEOUT_MS = 15000;
+const RESEARCH_MAX_DURATION_MS = 1000 * 60 * 12;
 
 function sortDocuments(documents: BusinessDocument[], mode: DocumentSort) {
   const sortable = [...documents];
@@ -84,26 +122,6 @@ function sortDocuments(documents: BusinessDocument[], mode: DocumentSort) {
   return sortable;
 }
 
-function buildBusinessContext(documents: BusinessDocument[]): string {
-  if (!documents.length) {
-    return "";
-  }
-
-  return documents
-    .slice(0, 6)
-    .map((document) => {
-      const snippet = document.content.slice(0, 3500);
-      return [
-        `Document title: ${document.title}`,
-        `Document type: ${document.extension}`,
-        `Token count: ${document.tokenCount}`,
-        "Content excerpt:",
-        snippet,
-      ].join("\n");
-    })
-    .join("\n\n---\n\n");
-}
-
 function quotesToTextAreaValue(quotes: string[]): string {
   return quotes.join("\n");
 }
@@ -115,12 +133,65 @@ function textAreaValueToQuotes(raw: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+function urlsToTextAreaValue(urls: string[]): string {
+  return urls.join("\n");
+}
+
+function textAreaValueToUrls(raw: string): string[] {
+  return raw
+    .split(/\r?\n|,/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((value, index, values) => values.indexOf(value) === index);
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
+}
+
+function formatClock(isoDate: string): string {
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Unknown";
+  }
+
+  return parsed.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function createRuntimeId(prefix: string): string {
+  const random =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  return `${prefix}-${random}`;
+}
+
+function createThreadTitleFromMessage(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return "Untitled chat";
+  }
+
+  return trimmed.length <= 60 ? trimmed : `${trimmed.slice(0, 60).trimEnd()}...`;
 }
 
 export function BoardAdvisorsApp() {
@@ -148,14 +219,20 @@ export function BoardAdvisorsApp() {
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSavingDocument, setIsSavingDocument] = useState(false);
-  const [researchingAdvisorId, setResearchingAdvisorId] = useState<string | null>(
-    null,
-  );
 
   const [draftContent, setDraftContent] = useState("");
   const [draftLexicalState, setDraftLexicalState] = useState<string | null>(null);
   const [draftDirty, setDraftDirty] = useState(false);
   const [documentTitleDraft, setDocumentTitleDraft] = useState("");
+  const [researchSourceUrlsDraft, setResearchSourceUrlsDraft] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [draggedAdvisorId, setDraggedAdvisorId] = useState<string | null>(null);
+  const [dragOverAdvisorId, setDragOverAdvisorId] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatWarning, setChatWarning] = useState("");
+  const [researchProgressSteps, setResearchProgressSteps] = useState<
+    ResearchProgressStep[]
+  >([]);
 
   useEffect(() => {
     try {
@@ -225,6 +302,63 @@ export function BoardAdvisorsApp() {
     [appState.advisors, selectedAdvisorId],
   );
 
+  const enabledAdvisors = useMemo(
+    () => appState.advisors.filter((advisor) => advisor.enabled),
+    [appState.advisors],
+  );
+
+  const sortedChatThreads = useMemo(
+    () => [...appState.chat.threads].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [appState.chat.threads],
+  );
+
+  const activeChatThread = useMemo(
+    () =>
+      appState.chat.activeThreadId
+        ? appState.chat.threads.find((thread) => thread.id === appState.chat.activeThreadId) ??
+          null
+        : null,
+    [appState.chat.activeThreadId, appState.chat.threads],
+  );
+
+  const activeResearchJobId = appState.advisorResearch.activeJobId;
+  const activeResearchAdvisorId = appState.advisorResearch.advisorId;
+  const activeResearchStartedAt = appState.advisorResearch.startedAt;
+  const [researchElapsedSeconds, setResearchElapsedSeconds] = useState(0);
+  const isResearchRunning =
+    activeResearchJobId !== null && activeResearchAdvisorId !== null;
+  const isSelectedAdvisorResearching =
+    selectedAdvisor !== null && activeResearchAdvisorId === selectedAdvisor.id;
+  const activeResearchAdvisorName = appState.advisorResearch.advisorName || "advisor";
+  const researchElapsedLabel = formatElapsed(researchElapsedSeconds);
+  const latestResearchProgressMessage =
+    researchProgressSteps.length > 0
+      ? researchProgressSteps[researchProgressSteps.length - 1]?.message ?? ""
+      : "";
+
+  function appendResearchProgress(stage: string, message: string, at = nowIso()) {
+    if (!stage || !message) {
+      return;
+    }
+
+    setResearchProgressSteps((previous) => {
+      const last = previous[previous.length - 1];
+      if (last && last.stage === stage && last.message === message) {
+        return previous;
+      }
+
+      return [
+        ...previous,
+        {
+          id: createRuntimeId("research-step"),
+          stage,
+          message,
+          at,
+        },
+      ];
+    });
+  }
+
   const filteredDocuments = useMemo(() => {
     const normalizedQuery = documentQuery.trim().toLowerCase();
 
@@ -265,6 +399,11 @@ export function BoardAdvisorsApp() {
     [appState.documents],
   );
 
+  const chatContextDocuments = useMemo(
+    () => selectDocumentsForChat(appState.documents),
+    [appState.documents],
+  );
+
   useEffect(() => {
     if (!selectedDocument) {
       setDocumentTitleDraft("");
@@ -289,6 +428,24 @@ export function BoardAdvisorsApp() {
   }, [selectedDocument]);
 
   useEffect(() => {
+    if (!selectedAdvisorId) {
+      setResearchSourceUrlsDraft("");
+      return;
+    }
+
+    const advisor =
+      appState.advisors.find((item) => item.id === selectedAdvisorId) ?? null;
+    if (!advisor) {
+      setResearchSourceUrlsDraft("");
+      return;
+    }
+
+    setResearchSourceUrlsDraft(
+      urlsToTextAreaValue(advisor.researchSourceUrls),
+    );
+  }, [appState.advisors, selectedAdvisorId]);
+
+  useEffect(() => {
     if (!filteredDocuments.length) {
       return;
     }
@@ -302,6 +459,254 @@ export function BoardAdvisorsApp() {
 
     setSelectedDocumentId(filteredDocuments[0].id);
   }, [filteredDocuments, selectedDocumentId]);
+
+  useEffect(() => {
+    if (appState.chat.threads.length === 0) {
+      if (appState.chat.activeThreadId !== null) {
+        setAppState((previous) => ({
+          ...previous,
+          chat: {
+            ...previous.chat,
+            activeThreadId: null,
+          },
+        }));
+      }
+      return;
+    }
+
+    if (
+      appState.chat.activeThreadId &&
+      appState.chat.threads.some((thread) => thread.id === appState.chat.activeThreadId)
+    ) {
+      return;
+    }
+
+    setAppState((previous) => ({
+      ...previous,
+      chat: {
+        ...previous.chat,
+        activeThreadId: previous.chat.threads[0]?.id ?? null,
+      },
+    }));
+  }, [appState.chat.activeThreadId, appState.chat.threads]);
+
+  useEffect(() => {
+    if (activeResearchJobId && !activeResearchAdvisorId) {
+      setAppState((previous) => {
+        if (!previous.advisorResearch.activeJobId || previous.advisorResearch.advisorId) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          advisorResearch: {
+            activeJobId: null,
+            advisorId: null,
+            advisorName: "",
+            startedAt: null,
+          },
+        };
+      });
+      setAdvisorError(
+        "A previous research session was interrupted. Please run research again.",
+      );
+      setResearchProgressSteps([]);
+      return;
+    }
+  }, [activeResearchAdvisorId, activeResearchJobId]);
+
+  useEffect(() => {
+    if (!isResearchRunning) {
+      setResearchElapsedSeconds(0);
+      return;
+    }
+
+    const startedAtMs = Date.parse(activeResearchStartedAt ?? "");
+    const baseMs = Number.isNaN(startedAtMs) ? Date.now() : startedAtMs;
+
+    const syncElapsed = () => {
+      const elapsedMs = Math.max(0, Date.now() - baseMs);
+      setResearchElapsedSeconds(Math.floor(elapsedMs / 1000));
+    };
+
+    syncElapsed();
+    const intervalId = window.setInterval(syncElapsed, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeResearchStartedAt, isResearchRunning]);
+
+  useEffect(() => {
+    if (!activeResearchJobId || !activeResearchAdvisorId) {
+      return;
+    }
+
+    let cancelled = false;
+    let pollTimeoutId: number | null = null;
+    const startedAtMs = Date.parse(activeResearchStartedAt ?? "");
+    const startedAtBaseMs = Number.isNaN(startedAtMs) ? Date.now() : startedAtMs;
+
+    const applySucceededResearch = (
+      bio: string,
+      quotes: string[],
+      message = "Research completed.",
+    ) => {
+      if (cancelled) {
+        return;
+      }
+
+      appendResearchProgress("succeeded", message, nowIso());
+
+      const completedAt = nowIso();
+      let resolvedName = "";
+      setAppState((previous) => {
+        resolvedName =
+          previous.advisors.find((advisor) => advisor.id === activeResearchAdvisorId)
+            ?.name ??
+          previous.advisorResearch.advisorName;
+
+        return {
+          ...previous,
+          advisors: previous.advisors.map((advisor) =>
+            advisor.id === activeResearchAdvisorId
+              ? {
+                  ...advisor,
+                  bio,
+                  quotes,
+                  lastResearchedAt: completedAt,
+                  updatedAt: completedAt,
+                }
+              : advisor,
+          ),
+          advisorResearch: {
+            activeJobId: null,
+            advisorId: null,
+            advisorName: "",
+            startedAt: null,
+          },
+        };
+      });
+      setStatusMessage(`Research updated for ${resolvedName || "advisor"}.`);
+      setAdvisorError("");
+    };
+
+    const applyFailedResearch = (
+      message: string,
+      stage = "failed",
+      stageMessage = "Research failed.",
+    ) => {
+      if (cancelled) {
+        return;
+      }
+
+      appendResearchProgress(stage, stageMessage, nowIso());
+
+      setAppState((previous) => ({
+        ...previous,
+        advisorResearch: {
+          activeJobId: null,
+          advisorId: null,
+          advisorName: "",
+          startedAt: null,
+        },
+      }));
+      setAdvisorError(message);
+    };
+
+    const scheduleNextPoll = () => {
+      if (cancelled) {
+        return;
+      }
+
+      pollTimeoutId = window.setTimeout(() => {
+        void pollJob();
+      }, RESEARCH_POLL_INTERVAL_MS);
+    };
+
+    const pollJob = async () => {
+      if (Date.now() - startedAtBaseMs > RESEARCH_MAX_DURATION_MS) {
+        applyFailedResearch(
+          "Research timed out after 12 minutes. Please retry with fewer source URLs.",
+          "failed",
+          "Timed out waiting for research to complete.",
+        );
+        return;
+      }
+
+      const abortController = new AbortController();
+      const requestTimeoutId = window.setTimeout(() => {
+        abortController.abort();
+      }, RESEARCH_POLL_REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(
+          `/api/advisors/research?jobId=${encodeURIComponent(activeResearchJobId)}`,
+          { cache: "no-store", signal: abortController.signal },
+        );
+        const payload = (await response.json()) as ResearchStatusResponse;
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Advisor research failed.");
+        }
+
+        if (payload.status === "succeeded") {
+          applySucceededResearch(
+            payload.bio ?? "",
+            payload.quotes ?? [],
+            payload.message || "Research completed.",
+          );
+          return;
+        }
+
+        if (payload.status === "failed" || payload.status === "cancelled") {
+          applyFailedResearch(
+            payload.error || "Advisor research failed.",
+            payload.status,
+            payload.message ||
+              (payload.status === "cancelled" ? "Research cancelled." : "Research failed."),
+          );
+          return;
+        }
+
+        if (payload.stage && payload.message) {
+          appendResearchProgress(
+            payload.stage,
+            payload.message,
+            payload.updatedAt || nowIso(),
+          );
+        }
+
+        scheduleNextPoll();
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        if (error instanceof DOMException && error.name === "AbortError") {
+          scheduleNextPoll();
+          return;
+        }
+
+        applyFailedResearch(
+          safeErrorMessage(error),
+          "failed",
+          "Polling research status failed.",
+        );
+      } finally {
+        window.clearTimeout(requestTimeoutId);
+      }
+    };
+
+    void pollJob();
+
+    return () => {
+      cancelled = true;
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId);
+      }
+    };
+  }, [activeResearchAdvisorId, activeResearchJobId, activeResearchStartedAt]);
 
   function updateSettings<K extends keyof AppState["settings"]>(
     field: K,
@@ -337,6 +742,31 @@ export function BoardAdvisorsApp() {
       documents: previous.documents.map((document) =>
         document.id === documentId ? updater(document) : document,
       ),
+    }));
+  }
+
+  function updateChatThread(
+    threadId: string,
+    updater: (thread: ChatThread) => ChatThread,
+  ) {
+    setAppState((previous) => ({
+      ...previous,
+      chat: {
+        ...previous.chat,
+        threads: previous.chat.threads.map((thread) =>
+          thread.id === threadId ? updater(thread) : thread,
+        ),
+      },
+    }));
+  }
+
+  function setChatRunning(isRunning: boolean) {
+    setAppState((previous) => ({
+      ...previous,
+      chat: {
+        ...previous.chat,
+        isRunning,
+      },
     }));
   }
 
@@ -534,6 +964,15 @@ export function BoardAdvisorsApp() {
     setAppState((previous) => ({
       ...previous,
       advisors: previous.advisors.filter((advisor) => advisor.id !== advisorId),
+      advisorResearch:
+        previous.advisorResearch.advisorId === advisorId
+          ? {
+              activeJobId: null,
+              advisorId: null,
+              advisorName: "",
+              startedAt: null,
+            }
+          : previous.advisorResearch,
     }));
 
     if (selectedAdvisorId === advisorId) {
@@ -541,8 +980,69 @@ export function BoardAdvisorsApp() {
     }
   }
 
-  async function handleResearchAdvisor() {
-    if (!selectedAdvisor) {
+  function handleDragStartAdvisor(
+    event: DragEvent<HTMLButtonElement>,
+    advisorId: string,
+  ) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", advisorId);
+    setDraggedAdvisorId(advisorId);
+    setDragOverAdvisorId(null);
+  }
+
+  function handleDragOverAdvisor(event: DragEvent<HTMLButtonElement>, advisorId: string) {
+    event.preventDefault();
+    if (dragOverAdvisorId !== advisorId) {
+      setDragOverAdvisorId(advisorId);
+    }
+  }
+
+  function handleDropAdvisor(targetAdvisorId: string) {
+    if (!draggedAdvisorId || draggedAdvisorId === targetAdvisorId) {
+      setDragOverAdvisorId(null);
+      return;
+    }
+
+    setAppState((previous) => {
+      const fromIndex = previous.advisors.findIndex((advisor) => advisor.id === draggedAdvisorId);
+      const toIndex = previous.advisors.findIndex((advisor) => advisor.id === targetAdvisorId);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+        return previous;
+      }
+
+      const reordered = [...previous.advisors];
+      const [moved] = reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, moved);
+      return {
+        ...previous,
+        advisors: reordered,
+      };
+    });
+
+    setStatusMessage("Advisor order updated.");
+    setDragOverAdvisorId(null);
+  }
+
+  function handleDragEndAdvisor() {
+    setDraggedAdvisorId(null);
+    setDragOverAdvisorId(null);
+  }
+
+  function commitResearchSourceUrlsForAdvisor(advisor: AdvisorProfile, raw: string) {
+    const normalizedUrls = textAreaValueToUrls(raw);
+    const normalizedText = urlsToTextAreaValue(normalizedUrls);
+    setResearchSourceUrlsDraft(normalizedText);
+    updateAdvisor(advisor.id, (previous) => ({
+      ...previous,
+      researchSourceUrls: normalizedUrls,
+      updatedAt: nowIso(),
+    }));
+
+    return normalizedUrls;
+  }
+
+  async function startResearchForAdvisor(advisor: AdvisorProfile) {
+    if (isResearchRunning) {
       return;
     }
 
@@ -552,9 +1052,14 @@ export function BoardAdvisorsApp() {
       return;
     }
 
-    setResearchingAdvisorId(selectedAdvisor.id);
+    if (advisor.researchSourceUrls.length === 0) {
+      setAdvisorError("Add at least one source URL before running research.");
+      return;
+    }
+
     setAdvisorError("");
     setStatusMessage("");
+    setResearchProgressSteps([]);
 
     try {
       const response = await fetch("/api/advisors/research", {
@@ -564,9 +1069,9 @@ export function BoardAdvisorsApp() {
         },
         body: JSON.stringify({
           apiKey: appState.settings.openaiApiKey,
-          advisorName: selectedAdvisor.name,
+          advisorName: advisor.name,
+          researchSourceUrls: advisor.researchSourceUrls,
           userName: appState.settings.userName,
-          businessContext: buildBusinessContext(appState.documents),
         }),
       });
 
@@ -576,19 +1081,307 @@ export function BoardAdvisorsApp() {
         throw new Error(payload.error || "Advisor research failed.");
       }
 
-      updateAdvisor(selectedAdvisor.id, (advisor) => ({
-        ...advisor,
-        bio: payload.bio,
-        quotes: payload.quotes,
-        lastResearchedAt: nowIso(),
-        updatedAt: nowIso(),
-      }));
+      if (!payload.jobId) {
+        throw new Error("Advisor research did not return a job id.");
+      }
 
-      setStatusMessage(`Research updated for ${selectedAdvisor.name}.`);
+      setAppState((previous) => ({
+        ...previous,
+        advisorResearch: {
+          activeJobId: payload.jobId,
+          advisorId: advisor.id,
+          advisorName: advisor.name,
+          startedAt: nowIso(),
+        },
+      }));
+      appendResearchProgress("queued", "Queued and waiting to start.");
+      setStatusMessage(`Research started for ${advisor.name}.`);
     } catch (error) {
       setAdvisorError(safeErrorMessage(error));
+    }
+  }
+
+  async function handleCancelResearch(silent = false): Promise<boolean> {
+    const activeJobId = appState.advisorResearch.activeJobId;
+    const activeAdvisorName = appState.advisorResearch.advisorName || "advisor";
+
+    if (!activeJobId) {
+      return true;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/advisors/research?jobId=${encodeURIComponent(activeJobId)}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok && response.status !== 404) {
+        throw new Error(payload.error || "Unable to cancel research.");
+      }
+    } catch (error) {
+      if (!silent) {
+        setAdvisorError(safeErrorMessage(error));
+      }
+      return false;
+    }
+
+    setAppState((previous) => ({
+      ...previous,
+      advisorResearch: {
+        activeJobId: null,
+        advisorId: null,
+        advisorName: "",
+        startedAt: null,
+      },
+    }));
+    appendResearchProgress("cancelled", "Research cancelled by user.");
+    setAdvisorError("");
+    if (!silent) {
+      setStatusMessage(`Research cancelled for ${activeAdvisorName}.`);
+    }
+    return true;
+  }
+
+  async function handleResearchAdvisor() {
+    if (!selectedAdvisor) {
+      return;
+    }
+
+    const normalizedUrls = commitResearchSourceUrlsForAdvisor(
+      selectedAdvisor,
+      researchSourceUrlsDraft,
+    );
+    await startResearchForAdvisor({
+      ...selectedAdvisor,
+      researchSourceUrls: normalizedUrls,
+    });
+  }
+
+  async function handleRestartResearch() {
+    if (!selectedAdvisor) {
+      return;
+    }
+
+    if (isResearchRunning) {
+      const cancelled = await handleCancelResearch(true);
+      if (!cancelled) {
+        return;
+      }
+    }
+
+    const normalizedUrls = commitResearchSourceUrlsForAdvisor(
+      selectedAdvisor,
+      researchSourceUrlsDraft,
+    );
+    await startResearchForAdvisor({
+      ...selectedAdvisor,
+      researchSourceUrls: normalizedUrls,
+    });
+  }
+
+  function handleCreateChatThread() {
+    const now = nowIso();
+    const thread: ChatThread = {
+      id: createRuntimeId("thread"),
+      title: "Untitled chat",
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+    };
+
+    setAppState((previous) => ({
+      ...previous,
+      chat: {
+        ...previous.chat,
+        threads: [thread, ...previous.chat.threads],
+        activeThreadId: thread.id,
+      },
+    }));
+    setChatInput("");
+    setChatWarning("");
+  }
+
+  function handleSelectChatThread(threadId: string) {
+    setAppState((previous) => ({
+      ...previous,
+      chat: {
+        ...previous.chat,
+        activeThreadId: threadId,
+      },
+    }));
+    setChatWarning("");
+  }
+
+  async function handleSendChatMessage() {
+    const normalizedMessage = chatInput.trim();
+    if (!normalizedMessage || appState.chat.isRunning) {
+      return;
+    }
+
+    if (!appState.settings.openaiApiKey.trim()) {
+      setChatWarning("Add an OpenAI API key in Settings before starting a debate.");
+      return;
+    }
+
+    if (enabledAdvisors.length === 0) {
+      setChatWarning("Enable at least one advisor in the Advisors tab before chatting.");
+      return;
+    }
+
+    const timestamp = nowIso();
+    const turnId = createRuntimeId("turn");
+    const threadId = activeChatThread?.id ?? createRuntimeId("thread");
+    const userMessage: ChatMessage = {
+      id: createRuntimeId("msg"),
+      threadId,
+      turnId,
+      role: "user",
+      content: normalizedMessage,
+      createdAt: timestamp,
+      status: "complete",
+    };
+
+    setAppState((previous) => {
+      const existingThread = previous.chat.threads.find((thread) => thread.id === threadId);
+
+      const nextThreads = existingThread
+        ? previous.chat.threads.map((thread) => {
+            if (thread.id !== threadId) {
+              return thread;
+            }
+
+            const nextTitle =
+              thread.messages.length === 0
+                ? createThreadTitleFromMessage(normalizedMessage)
+                : thread.title;
+
+            return {
+              ...thread,
+              title: nextTitle,
+              updatedAt: timestamp,
+              messages: [...thread.messages, userMessage],
+            };
+          })
+        : [
+            {
+              id: threadId,
+              title: createThreadTitleFromMessage(normalizedMessage),
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              messages: [userMessage],
+            },
+            ...previous.chat.threads,
+          ];
+
+      return {
+        ...previous,
+        chat: {
+          ...previous.chat,
+          threads: nextThreads,
+          activeThreadId: threadId,
+          isRunning: true,
+        },
+      };
+    });
+
+    setChatInput("");
+    setChatWarning("");
+
+    try {
+      const response = await fetch("/api/chat/debate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          apiKey: appState.settings.openaiApiKey,
+          userName: appState.settings.userName,
+          message: normalizedMessage,
+          advisors: enabledAdvisors.map((advisor) => ({
+            id: advisor.id,
+            name: advisor.name,
+            bio: advisor.bio,
+            quotes: advisor.quotes,
+          })),
+          documents: chatContextDocuments,
+          threadId,
+          turnId,
+        }),
+      });
+
+      const payload = (await response.json()) as DebateResponse;
+      if (!response.ok) {
+        throw new Error(payload.error || "Debate request failed.");
+      }
+
+      const now = nowIso();
+      const advisorMessages: ChatMessage[] = payload.advisorMessages.map((message) => ({
+        id: createRuntimeId("msg"),
+        threadId,
+        turnId,
+        role: "advisor",
+        advisorId: message.advisorId,
+        advisorName: message.advisorName,
+        content: message.content,
+        sourceDocumentTitles: message.sourceDocumentTitles,
+        createdAt: now,
+        status: "complete",
+      }));
+
+      const synthesisMessage: ChatMessage = {
+        id: createRuntimeId("msg"),
+        threadId,
+        turnId,
+        role: "synthesis",
+        content: payload.synthesisMessage.content,
+        sourceDocumentTitles: payload.synthesisMessage.sourceDocumentTitles,
+        createdAt: now,
+        status: "complete",
+      };
+
+      const warnings = payload.warnings ?? [];
+      if (warnings.length > 0) {
+        setChatWarning(`${warnings.length} advisor response(s) failed in this turn.`);
+      }
+
+      const systemWarning: ChatMessage[] = warnings.map((warning) => ({
+        id: createRuntimeId("msg"),
+        threadId,
+        turnId,
+        role: "system",
+        content: warning,
+        createdAt: now,
+        status: "error",
+        error: warning,
+      }));
+
+      updateChatThread(threadId, (thread) => ({
+        ...thread,
+        updatedAt: now,
+        messages: [...thread.messages, ...advisorMessages, synthesisMessage, ...systemWarning],
+      }));
+    } catch (error) {
+      const failureMessage = safeErrorMessage(error);
+      setChatWarning(failureMessage);
+      updateChatThread(threadId, (thread) => ({
+        ...thread,
+        updatedAt: nowIso(),
+        messages: [
+          ...thread.messages,
+          {
+            id: createRuntimeId("msg"),
+            threadId,
+            turnId,
+            role: "system",
+            content: failureMessage,
+            createdAt: nowIso(),
+            status: "error",
+            error: failureMessage,
+          },
+        ],
+      }));
     } finally {
-      setResearchingAdvisorId(null);
+      setChatRunning(false);
     }
   }
 
@@ -609,7 +1402,7 @@ export function BoardAdvisorsApp() {
         <header className="boa-header">
           <div>
             <p className="boa-kicker">Advisory Council</p>
-            <h1>Board of Advisors</h1>
+            <h1>MM/GC board of advisors</h1>
             <p className="boa-subtitle">
               Build your local strategy corpus, shape advisor personas, and prepare
               for multi-expert debate sessions.
@@ -668,15 +1461,25 @@ export function BoardAdvisorsApp() {
 
                 <label className="boa-field">
                   <span>OpenAI API key</span>
-                  <input
-                    type="password"
-                    placeholder="sk-..."
-                    value={appState.settings.openaiApiKey}
-                    onChange={(event) =>
-                      updateSettings("openaiApiKey", event.target.value.trim())
-                    }
-                    autoComplete="off"
-                  />
+                  <div className="boa-input-with-action">
+                    <input
+                      type={showApiKey ? "text" : "password"}
+                      placeholder="sk-..."
+                      value={appState.settings.openaiApiKey}
+                      onChange={(event) =>
+                        updateSettings("openaiApiKey", event.target.value.trim())
+                      }
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="boa-input-action"
+                      onClick={() => setShowApiKey((previous) => !previous)}
+                      aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                    >
+                      {showApiKey ? "Hide" : "Show"}
+                    </button>
+                  </div>
                 </label>
               </section>
             )}
@@ -1023,10 +1826,20 @@ export function BoardAdvisorsApp() {
                           <li key={advisor.id}>
                             <button
                               type="button"
-                              className={`boa-list-item ${
+                              draggable
+                              className={`boa-list-item draggable ${
                                 selectedAdvisorId === advisor.id ? "active" : ""
-                              }`}
+                              } ${dragOverAdvisorId === advisor.id ? "drag-over" : ""}`}
                               onClick={() => setSelectedAdvisorId(advisor.id)}
+                              onDragStart={(event) =>
+                                handleDragStartAdvisor(event, advisor.id)
+                              }
+                              onDragOver={(event) =>
+                                handleDragOverAdvisor(event, advisor.id)
+                              }
+                              onDrop={() => handleDropAdvisor(advisor.id)}
+                              onDragEnd={handleDragEndAdvisor}
+                              title="Drag to reorder advisors"
                             >
                               <strong>{advisor.name || "Unnamed advisor"}</strong>
                               <span>{advisor.enabled ? "Enabled" : "Disabled"}</span>
@@ -1085,6 +1898,27 @@ export function BoardAdvisorsApp() {
                           />
                         </label>
 
+                        <label className="boa-field">
+                          <span>Research source URLs (required, one per line or comma-separated)</span>
+                          <textarea
+                            rows={4}
+                            placeholder={"https://...\nhttps://..."}
+                            value={researchSourceUrlsDraft}
+                            onChange={(event) =>
+                              setResearchSourceUrlsDraft(event.target.value)
+                            }
+                            onBlur={() => {
+                              commitResearchSourceUrlsForAdvisor(
+                                selectedAdvisor,
+                                researchSourceUrlsDraft,
+                              );
+                            }}
+                          />
+                          <small className="boa-note tiny">
+                            Research uses only these URLs.
+                          </small>
+                        </label>
+
                         <label className="boa-field checkbox">
                           <input
                             type="checkbox"
@@ -1101,23 +1935,69 @@ export function BoardAdvisorsApp() {
                         </label>
 
                         <div className="boa-editor-actions wrap">
-                          <span>
-                            {selectedAdvisor.lastResearchedAt
-                              ? `Last researched ${formatDate(
-                                  selectedAdvisor.lastResearchedAt,
-                                )}`
-                              : "No research result yet"}
+                          <span className="boa-research-status">
+                            {isResearchRunning && (
+                              <span className="boa-spinner" aria-hidden="true" />
+                            )}
+                            {isSelectedAdvisorResearching
+                              ? `Research in progress (${researchElapsedLabel})${latestResearchProgressMessage ? ` - ${latestResearchProgressMessage}` : ""}`
+                              : isResearchRunning
+                                ? `Research in progress for ${activeResearchAdvisorName} (${researchElapsedLabel})${latestResearchProgressMessage ? ` - ${latestResearchProgressMessage}` : ""}`
+                                : selectedAdvisor.lastResearchedAt
+                                  ? `Last researched ${formatDate(
+                                      selectedAdvisor.lastResearchedAt,
+                                    )}`
+                                  : "No research result yet"}
                           </span>
                           <button
                             type="button"
                             onClick={handleResearchAdvisor}
-                            disabled={researchingAdvisorId === selectedAdvisor.id}
+                            disabled={isResearchRunning}
                           >
-                            {researchingAdvisorId === selectedAdvisor.id
-                              ? "Researching..."
-                              : "Research Advisor"}
+                            {isSelectedAdvisorResearching
+                              ? `Researching (${researchElapsedLabel})...`
+                              : isResearchRunning
+                                ? `Research Running (${researchElapsedLabel})`
+                                : "Research Advisor"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRestartResearch}
+                          >
+                            Restart Research
+                          </button>
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => {
+                              void handleCancelResearch();
+                            }}
+                            disabled={!isResearchRunning}
+                          >
+                            Cancel Research
                           </button>
                         </div>
+
+                        {isSelectedAdvisorResearching && (
+                          <p className="boa-note tiny" aria-live="polite">
+                            Research is running and may take several minutes depending on
+                            web search and model latency.
+                          </p>
+                        )}
+
+                        {researchProgressSteps.length > 0 && (
+                          <div className="boa-research-progress" aria-live="polite">
+                            <p className="boa-note tiny">Live research steps</p>
+                            <ol className="boa-research-steps">
+                              {researchProgressSteps.slice(-6).map((step) => (
+                                <li key={step.id}>
+                                  <span>{step.message}</span>
+                                  <small>{formatClock(step.at)}</small>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
 
                         <label className="boa-field">
                           <span>Bio (4-6 paragraphs)</span>
@@ -1156,20 +2036,118 @@ export function BoardAdvisorsApp() {
             )}
 
             {activeTab === "chat" && (
-              <section className="boa-panel boa-chat-placeholder">
-                <h2>Debate Chat (Next Build Step)</h2>
-                <p>
-                  This section will host the multi-advisor debate experience. The next
-                  iteration can orchestrate enabled advisors as an agent swarm, grounded by
-                  your stored documents and profile context.
-                </p>
-                <ul>
-                  <li>Enabled advisors: {appState.advisors.filter((a) => a.enabled).length}</li>
-                  <li>Documents loaded: {appState.documents.length}</li>
-                  <li>
-                    Ready for setup: {appState.settings.openaiApiKey.trim() ? "Yes" : "No"}
-                  </li>
-                </ul>
+              <section className="boa-panel">
+                <div className="boa-panel-head">
+                  <h2>Debate Chat</h2>
+                  <p>
+                    Ask one strategic question and get one round of advisor responses
+                    followed by a synthesized recommendation.
+                  </p>
+                </div>
+
+                <div className="boa-chat-layout">
+                  <aside className="boa-chat-threads">
+                    <button type="button" onClick={handleCreateChatThread}>
+                      New Chat
+                    </button>
+
+                    <ul className="boa-list">
+                      {sortedChatThreads.length === 0 && (
+                        <li className="boa-empty">No chat threads yet.</li>
+                      )}
+                      {sortedChatThreads.map((thread) => (
+                        <li key={thread.id}>
+                          <button
+                            type="button"
+                            className={`boa-list-item ${
+                              appState.chat.activeThreadId === thread.id ? "active" : ""
+                            }`}
+                            onClick={() => handleSelectChatThread(thread.id)}
+                          >
+                            <strong>{thread.title}</strong>
+                            <span>{thread.messages.length} messages</span>
+                            <small>{formatDate(thread.updatedAt)}</small>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </aside>
+
+                  <article className="boa-chat-stage">
+                    <div className="boa-chat-status-row">
+                      <span>Enabled advisors: {enabledAdvisors.length}</span>
+                      <span>
+                        Context docs in request:{" "}
+                        {chatContextDocuments.length}
+                      </span>
+                    </div>
+
+                    {chatWarning && <p className="boa-message error">{chatWarning}</p>}
+
+                    <div className="boa-chat-transcript" aria-live="polite">
+                      {!activeChatThread && (
+                        <div className="boa-empty-state">
+                          Create or select a chat thread to start debating.
+                        </div>
+                      )}
+
+                      {activeChatThread &&
+                        activeChatThread.messages.map((message) => (
+                          <article
+                            key={message.id}
+                            className={`boa-chat-message boa-chat-${message.role}`}
+                          >
+                            <header>
+                              <strong>
+                                {message.role === "user" && "You"}
+                                {message.role === "advisor" &&
+                                  (message.advisorName || "Advisor")}
+                                {message.role === "synthesis" && "Final Recommendation"}
+                                {message.role === "system" && "System"}
+                              </strong>
+                              <small>{formatDate(message.createdAt)}</small>
+                            </header>
+                            <p>{message.content}</p>
+                            {message.sourceDocumentTitles &&
+                              message.sourceDocumentTitles.length > 0 && (
+                                <small>
+                                  Sources: {message.sourceDocumentTitles.join(", ")}
+                                </small>
+                              )}
+                          </article>
+                        ))}
+                    </div>
+
+                    <form
+                      className="boa-chat-composer"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void handleSendChatMessage();
+                      }}
+                    >
+                      <label className="boa-chat-input-label" htmlFor="chat-question-input">
+                        Your question
+                      </label>
+                      <textarea
+                        id="chat-question-input"
+                        rows={4}
+                        placeholder="Type your question for the advisor debate..."
+                        value={chatInput}
+                        onChange={(event) => setChatInput(event.target.value)}
+                        disabled={appState.chat.isRunning}
+                      />
+                      <div className="boa-chat-composer-row">
+                        <span>{appState.chat.isRunning ? "Running..." : "Ready"}</span>
+                        <button
+                          type="submit"
+                          disabled={appState.chat.isRunning || chatInput.trim().length === 0}
+                        >
+                          {appState.chat.isRunning ? "Running..." : "Send"}
+                        </button>
+                      </div>
+                    </form>
+                  </article>
+                </div>
               </section>
             )}
           </div>

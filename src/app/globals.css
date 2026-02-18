@@ -315,6 +315,7 @@ code {
 
 .boa-field input,
 .boa-field textarea,
+.boa-field select,
 .boa-sidebar input,
 .boa-sidebar button,
 .boa-upload {
@@ -323,6 +324,7 @@ code {
 
 .boa-field input,
 .boa-field textarea,
+.boa-field select,
 .boa-sidebar input {
   width: 100%;
   border: 1px solid rgba(103, 96, 82, 0.35);
@@ -334,6 +336,7 @@ code {
 
 .boa-field input:focus,
 .boa-field textarea:focus,
+.boa-field select:focus,
 .boa-sidebar input:focus,
 .lexical-input:focus {
   outline: 2px solid rgba(194, 109, 76, 0.42);
@@ -355,6 +358,31 @@ code {
 .boa-field.checkbox input {
   width: auto;
   margin: 0;
+}
+
+.boa-input-with-action {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.boa-input-with-action input {
+  flex: 1;
+}
+
+.boa-input-action {
+  border: 1px solid rgba(104, 96, 82, 0.32);
+  border-radius: 10px;
+  padding: 0.52rem 0.72rem;
+  background: linear-gradient(180deg, #fffdf7 0%, #f0ebde 100%);
+  color: var(--boa-ink);
+  font-weight: 640;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.boa-input-action:hover {
+  filter: saturate(1.1);
 }
 
 .boa-two-up {
@@ -529,6 +557,19 @@ code {
   color: var(--boa-ink);
 }
 
+.boa-list-item.draggable {
+  cursor: grab;
+}
+
+.boa-list-item.draggable:active {
+  cursor: grabbing;
+}
+
+.boa-list-item.drag-over {
+  border-color: rgba(194, 109, 76, 0.58);
+  background: rgba(194, 109, 76, 0.14);
+}
+
 .boa-sidebar-section .boa-list-main {
   appearance: none;
   border: 0 !important;
@@ -649,6 +690,11 @@ code {
   color: var(--boa-danger);
 }
 
+.boa-editor-actions .danger {
+  border-color: rgba(164, 55, 45, 0.4);
+  color: var(--boa-danger);
+}
+
 .boa-editor-actions {
   display: flex;
   align-items: center;
@@ -662,8 +708,59 @@ code {
   font-size: 0.86rem;
 }
 
+.boa-research-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.boa-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  border: 2px solid rgba(194, 109, 76, 0.3);
+  border-top-color: var(--boa-accent);
+  animation: boa-spin 700ms linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes boa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .boa-editor-actions.wrap {
   flex-wrap: wrap;
+}
+
+.boa-research-progress {
+  margin-top: 0.65rem;
+  border: 1px solid rgba(104, 96, 82, 0.25);
+  border-radius: 10px;
+  background: rgba(255, 252, 246, 0.72);
+  padding: 0.55rem 0.65rem;
+}
+
+.boa-research-steps {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.boa-research-steps li {
+  color: var(--boa-muted);
+  font-size: 0.82rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.boa-research-steps small {
+  color: #867f72;
+  white-space: nowrap;
 }
 
 .boa-empty-state {
@@ -732,10 +829,147 @@ code {
   text-decoration: underline;
 }
 
-.boa-chat-placeholder ul {
-  margin: 0.8rem 0 0;
-  padding-left: 1rem;
+.boa-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 0.9rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.boa-chat-threads {
+  border: 1px solid rgba(103, 96, 82, 0.26);
+  border-radius: 16px;
+  background: rgba(247, 244, 236, 0.88);
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.7rem;
+  min-height: 0;
+}
+
+.boa-chat-stage {
+  border: 1px solid rgba(103, 96, 82, 0.26);
+  border-radius: 16px;
+  background: rgba(255, 253, 248, 0.8);
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-height: 0;
+}
+
+.boa-chat-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  font-size: 0.82rem;
   color: var(--boa-muted);
+}
+
+.boa-chat-transcript {
+  border: 1px solid rgba(103, 96, 82, 0.24);
+  border-radius: 12px;
+  background: rgba(253, 250, 243, 0.85);
+  padding: 0.75rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 0.6rem;
+}
+
+.boa-chat-message {
+  border: 1px solid rgba(104, 96, 82, 0.28);
+  border-radius: 12px;
+  padding: 0.62rem 0.72rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.boa-chat-message header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.boa-chat-message header small {
+  color: var(--boa-muted);
+  font-size: 0.76rem;
+}
+
+.boa-chat-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.46;
+}
+
+.boa-chat-message > small {
+  color: var(--boa-muted);
+  font-size: 0.76rem;
+}
+
+.boa-chat-user {
+  background: rgba(194, 109, 76, 0.12);
+  border-color: rgba(194, 109, 76, 0.44);
+}
+
+.boa-chat-advisor {
+  background: rgba(246, 242, 233, 0.92);
+}
+
+.boa-chat-synthesis {
+  background: rgba(60, 119, 88, 0.11);
+  border-color: rgba(60, 119, 88, 0.48);
+}
+
+.boa-chat-system {
+  background: rgba(164, 55, 45, 0.12);
+  border-color: rgba(164, 55, 45, 0.43);
+}
+
+.boa-chat-composer {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid rgba(103, 96, 82, 0.25);
+  border-radius: 12px;
+  background: rgba(255, 252, 246, 0.86);
+  padding: 0.65rem;
+}
+
+.boa-chat-input-label {
+  font-size: 0.82rem;
+  font-weight: 620;
+  color: #5a5449;
+}
+
+.boa-chat-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 120px;
+  border: 1px solid rgba(90, 82, 67, 0.45);
+  border-radius: 12px;
+  background: #fff;
+  padding: 0.7rem 0.8rem;
+  color: var(--boa-ink);
+  font: inherit;
+}
+
+.boa-chat-composer textarea:focus {
+  outline: 2px solid rgba(194, 109, 76, 0.5);
+  outline-offset: 1px;
+}
+
+.boa-chat-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.boa-chat-composer-row span {
+  color: var(--boa-muted);
+  font-size: 0.84rem;
 }
 
 .boa-loading-card {
@@ -778,6 +1012,10 @@ code {
 
   .boa-doc-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .boa-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
